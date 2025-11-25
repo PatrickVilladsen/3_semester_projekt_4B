@@ -15,6 +15,9 @@ def index():
 
 @app.route("/data")
 def data():
+    """
+    Funktion der viser humidity data på hjemmeside
+    """
     humidity_data = read_humidity(dummy_json)
     return render_template('data.html', humidity_data = humidity_data)
 
