@@ -1,0 +1,19 @@
+{
+    "DHT11 måling":[
+        {
+            "Datetime": "26/11/2025 11:00:02",
+            "Temperatur": 25,
+            "Fugtighed": 30
+        },
+        {
+            "Datetime": "26/11/2025 11:00:02",
+            "Temperatur": 25,
+            "Fugtighed": 30
+        },
+        {
+            "Datetime": "26/11/2025 11:00:02",
+            "Temperatur": 25,
+            "Fugtighed": 30
+        }
+    ]
+}
