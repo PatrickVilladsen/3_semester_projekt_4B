@@ -41,10 +41,12 @@ def get_data(number_of_rows):
             conn.close()
         sleep(1)
 
-@app.post('/add_dht11')
-@app.input(DHT11Data)
-def add_new_dht11_reading():
-     return get_data(10)
+@app.post('/DHT11_data')
+def get_dht11_data():
+     """
+     Get the contents of data.json
+     """
+     return read_json()
 
 @app.route("/")
 def index():
