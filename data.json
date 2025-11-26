@@ -1,10 +1,15 @@
 {
-    "DHT11 måling":[
+    "Data":[
         {
             "Datetime": "26/11/2025 11:00:02",
-            "Temperatur": 25,
-            "Fugtighed": 30
-        },
+            "TemperaturOUT": 25,
+            "FugtighedOUT": 30,
+            "TemperaturIN": 22,
+            "FugtighedIN": 10,
+            "Luftkvalitet": 10,
+            "Vindue Tilstand": "Åben/Lukket",
+            "Låst": true
+            },
         {
             "Datetime": "26/11/2025 11:00:02",
             "Temperatur": 25,
