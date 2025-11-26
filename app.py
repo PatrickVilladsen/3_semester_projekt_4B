@@ -41,12 +41,12 @@ def get_data(number_of_rows):
         finally:
             conn.close()
         sleep(1)
-
+"""
 @app.post('/add_dht11')
 @app.input(DHT11Data)
 def add_new_dht11_reading():
      ...
-
+"""
 @app.route("/")
 def index():
     return render_template('index.html')
