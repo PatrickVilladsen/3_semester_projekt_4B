@@ -1,16 +1,22 @@
 from flask import Flask, render_template
-from apiflask import Schema
+from apiflask import APIFlask, Schema
 from apiflask.fields import Integer, String
 import json
 import sqlite3
 from time import sleep
 
-app = Flask(__name__)
+app = APIFlask(__name__)
 
 class DHT11Data(Schema):
      datetime = String(required=True)
      temperature = Integer(required=True)
      humidity = Integer(required=True)
+"""
+def read_json():
+     with open("patients.yml") as yaml_file:
+        yaml_data = yaml.safe_load(yaml_file)
+        return yaml_data
+"""
 
 def get_data(number_of_rows):
         query = """SELECT * FROM stue ORDER BY datetime DESC;"""
@@ -35,12 +41,12 @@ def get_data(number_of_rows):
         finally:
             conn.close()
         sleep(1)
-"""
+
 @app.post('/add_dht11')
 @app.input(DHT11Data)
 def add_new_dht11_reading():
-     ...
-"""
+     return get_data(10)
+
 @app.route("/")
 def index():
     return render_template('index.html')
