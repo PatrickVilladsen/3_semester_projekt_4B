@@ -12,12 +12,6 @@ class DHT11Data(Schema):
      temperature = Integer(required=True)
      humidity = Integer(required=True)
 
-dummy_json = '{"Temperature":23, "Humidity": 10}'
-
-def read_humidity(json_data):
-    data = json.loads(json_data)
-    return data["Humidity"]
-
 def get_data(number_of_rows):
         query = """SELECT * FROM stue ORDER BY datetime DESC;"""
         datetimes = []
