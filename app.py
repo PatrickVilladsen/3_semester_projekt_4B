@@ -1,11 +1,13 @@
 from flask import Flask, render_template
-from apiflask import APIFlask, Schema
+from apiflask import APIFlask, Schema, HTTPTokenAuth
 from apiflask.fields import Integer, String
 import json
 import sqlite3
 from time import sleep
+import secrets
 
 app = APIFlask(__name__)
+
 
 class DHT11Data(Schema):
      datetime = String(required=True)
@@ -41,7 +43,7 @@ def get_data(number_of_rows):
             conn.close()
         sleep(1)
 
-@app.post('/DHT11_data')
+@app.get('/DHT11_data')
 def get_dht11_data():
      """
      Get the contents of data.json
@@ -50,6 +52,9 @@ def get_dht11_data():
 
 @app.route("/")
 def index():
+    """
+    Home page
+    """
     return render_template('index.html')
 
 @app.route("/data")
@@ -57,7 +62,6 @@ def data():
     """
     Funktion der viser humidity data på hjemmeside
     """
-    #humidity_data = read_humidity(dummy_json)
     all_data = get_data(10)
     return render_template('data.html', all_data = all_data)
 
