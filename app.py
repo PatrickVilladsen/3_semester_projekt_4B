@@ -8,7 +8,6 @@ import secrets
 
 app = APIFlask(__name__)
 
-
 class DHT11Data(Schema):
      datetime = String(required=True)
      temperature = Integer(required=True)
