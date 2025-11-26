@@ -11,12 +11,11 @@ class DHT11Data(Schema):
      datetime = String(required=True)
      temperature = Integer(required=True)
      humidity = Integer(required=True)
-"""
+
 def read_json():
-     with open("patients.yml") as yaml_file:
-        yaml_data = yaml.safe_load(yaml_file)
-        return yaml_data
-"""
+     with open("data.json") as json_file:
+        json_data = json.load(json_file)
+        return json_data
 
 def get_data(number_of_rows):
         query = """SELECT * FROM stue ORDER BY datetime DESC;"""
