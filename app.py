@@ -45,7 +45,7 @@ def get_data(number_of_rows):
 @app.get('/DHT11_data')
 def get_dht11_data():
      """
-     Get the contents of data.json
+     Returns the contents of data.json
      """
      return read_json()
 
