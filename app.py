@@ -1,9 +1,16 @@
 from flask import Flask, render_template
+from apiflask import Schema
+from apiflask.fields import Integer, String
 import json
 import sqlite3
 from time import sleep
 
 app = Flask(__name__)
+
+class DHT11Data(Schema):
+     datetime = String(required=True)
+     temperature = Integer(required=True)
+     humidity = Integer(required=True)
 
 dummy_json = '{"Temperature":23, "Humidity": 10}'
 
@@ -34,6 +41,11 @@ def get_data(number_of_rows):
         finally:
             conn.close()
         sleep(1)
+
+@app.post('/add_dht11')
+@app.input(DHT11Data)
+def add_new_dht11_reading():
+     ...
 
 @app.route("/")
 def index():
