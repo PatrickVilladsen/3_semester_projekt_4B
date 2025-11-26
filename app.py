@@ -10,7 +10,7 @@ app = Flask(__name__)
 api_key = '??????'
 
 @app.route("/")
-def test() : 
+def get_index() : 
     return render_template('index.html', utc_dt=datetime.datetime.utcnow())
 #app.run starts the flask server 
 if __name__ == "__main__": 
