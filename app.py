@@ -1,22 +1,22 @@
 from flask import Flask, render_template
-from apiflask import Schema
+from apiflask import APIFlask, Schema, HTTPTokenAuth
 from apiflask.fields import Integer, String
 import json
 import sqlite3
 from time import sleep
+import secrets
 
-app = Flask(__name__)
+app = APIFlask(__name__)
 
 class DHT11Data(Schema):
      datetime = String(required=True)
      temperature = Integer(required=True)
      humidity = Integer(required=True)
 
-dummy_json = '{"Temperature":23, "Humidity": 10}'
-
-def read_humidity(json_data):
-    data = json.loads(json_data)
-    return data["Humidity"]
+def read_json():
+     with open("data.json") as json_file:
+        json_data = json.load(json_file)
+        return json_data
 
 def get_data(number_of_rows):
         query = """SELECT * FROM stue ORDER BY datetime DESC;"""
@@ -41,14 +41,19 @@ def get_data(number_of_rows):
         finally:
             conn.close()
         sleep(1)
-"""
-@app.post('/add_dht11')
-@app.input(DHT11Data)
-def add_new_dht11_reading():
-     ...
-"""
+
+@app.get('/DHT11_data')
+def get_dht11_data():
+     """
+     Returns the contents of data.json
+     """
+     return read_json()
+
 @app.route("/")
 def index():
+    """
+    Home page
+    """
     return render_template('index.html')
 
 @app.route("/data")
@@ -56,7 +61,6 @@ def data():
     """
     Funktion der viser humidity data på hjemmeside
     """
-    #humidity_data = read_humidity(dummy_json)
     all_data = get_data(10)
     return render_template('data.html', all_data = all_data)
 
