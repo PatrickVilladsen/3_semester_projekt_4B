@@ -1,42 +1,58 @@
+<!--Mål for hjemmeside 
+Navbar = Esp32 | vinduestatus (symbol for tændt eller slukket)| Timestamp
+Midten af hjemmesiden = batteri procent luftkvalitet og gas
+Farve kodning og symboler på de ting som vises i midten af hjemmesiden 
+Bunden af hjemmesiden = to knapper, symbol med åben vindue og lukket vindue
+I hjørnet af hjemmesiden =lille kasse med udendørs data
+lille kasse med info - knap med at gå tilbage
+Brug f11 for fullscreen for at teste hele-->
+
 <!DOCTYPE html>
 <html lang="en">
-<nav class="navbar navbarand-lg bg-body-tertiary">
-    <a class="navbar-brand" href="#">Navbar</a>
-        <li class="nav-item">
-          <a class="nav-link active" aria-cursrent="page" href="#">Home</a>
-        <li class="nav-item">
-          <a class="nav-link" href="#">Features</a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link" href="#">Pricing</a>
-        </ul>
-        </li>
-      </ul>
-    </div>
-  </div>
-</nav>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width"=devide-width, initial-scale=1>
-    <title>{% block title %} {% endblock %} - FlaskApp</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
-    <style>
-        nav a {
-            color: #161515;
-            font-size: 2em;
-            margin-left: 50px;
-            text-decoration: none
-        }
-    </style>
+
+<head>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet"
+    integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+    integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+    crossorigin="anonymous"></script>
 </head>
+
 <body>
-    <nav>
-        <a href="#">Dirty air done dirt cheap</a>
-        <a href="#">About</a>
-    </nav>
-    <hr>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script>
-    <div class="content">
-        {% block content %} {% endblock %}
+  <nav class="navbar navbar-expand-lg bg-body-tertiary custom-navbar">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="#">Ren luft </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarTogglerDemo02"
+        aria-controls="navbarTogglerDemo02" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarTogglerDemo02">
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+          <li class="nav-item">
+            <a class="nav-link active" aria-current="page" href="#">Esp32</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#">Vinduestatus</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link disabled" aria-disabled="true">Symbol for vindue status</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#">Insert time</a>
+          </li>
+        </ul>
+        <form class="d-flex" role="search">
+          <input class="form-control me-2" type="search" placeholder="Search" aria-label="Search" />
+          <button class="btn btn-outline-success" type="submit">Search</button>
+        </form>
+      </div>
     </div>
+  </nav>
+  {% block content %} {% endblock %}
+
 </body>
+
 </html>
