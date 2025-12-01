@@ -8,10 +8,12 @@ import secrets
 
 app = APIFlask(__name__)
 
+"""
 class DHT11Data(Schema):
      datetime = String(required=True)
      temperature = Integer(required=True)
      humidity = Integer(required=True)
+"""
 
 def read_json():
      with open("data.json") as json_file:
