@@ -38,10 +38,10 @@ def read_json(json_file):
 
 def read_json(json_file: Path) -> dict:
     """Read from a given json-file.
-    Args: 
-        json_fil(Path): given json-file
+    Args:
+        json_fil(Path): given json-file.
     Returns:
-        dict: json.load(json_file)
+        dict: json.load(json_file).
     """
     try:
         with open(json_file) as data:
