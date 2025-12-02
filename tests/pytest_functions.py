@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+# Pytest - function 1
 def read_json(json_file: Path) -> dict:
     """Read from a given json-file.
     Args:
@@ -18,4 +19,4 @@ def read_json(json_file: Path) -> dict:
         return e
 
 if __name__ == "__main__":
-    print(read_json("data1.json"))
+    print(read_json("test_json.json"))
