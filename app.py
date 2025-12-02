@@ -15,17 +15,19 @@ class DHT11Data(Schema):
      temperature = Integer(required=True)
      humidity = Integer(required=True)
 """
-
+"""
 def read_json():
     with open("data.json") as data:
         json_data = json.load(data)
         return json_data
-  
+"""
+"""
 def read_json(json_file):
     with open(json_file) as data:
         json_data = json.load(data)
         return json_data
-
+"""
+"""
 def read_json(json_file):
     try:
         with open(json_file) as data:
@@ -35,6 +37,7 @@ def read_json(json_file):
         return "Decoding error: file could be empty"
     except FileNotFoundError as e:
         return e
+"""
 
 def read_json(json_file: Path) -> dict:
     """Read from a given json-file.

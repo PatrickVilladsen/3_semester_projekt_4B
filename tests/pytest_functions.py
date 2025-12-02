@@ -10,5 +10,6 @@ def read_json(json_fil: Path) -> dict:
         return "Decoding error: file could be empty"
     except FileNotFoundError as e:
         return e
-    
-print(read_json("data1.json"))
+
+if __name__ == "__main__":
+    print(read_json("data1.json"))
