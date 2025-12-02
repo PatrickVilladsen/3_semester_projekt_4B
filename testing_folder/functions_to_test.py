@@ -35,4 +35,5 @@ def write_to_json(data: dict, json_file: Path) -> None:
         raise FileNotFoundError
 
 if __name__ == "__main__":
+    write_to_json({'key': 'BIG vålue'}, "testing_json.json")
     print(read_from_json("testing_json.json"))
