@@ -12,7 +12,7 @@ def read_json(json_file: Path) -> dict:
     """
     try:
         if os.path.exists(json_file):
-            with open(json_file) as data:
+            with open(json_file, encoding='utf-8') as data:
                 json_data = json.load(data)
                 return json_data
         else:
