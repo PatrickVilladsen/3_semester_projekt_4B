@@ -1,5 +1,5 @@
 import pytest
-from pytest_functions import *
+from pytest_functions import read_json
 
 def test_read_json():
     assert pytest.read_json("test_json.json") == "{'key': 'value'}" #true
