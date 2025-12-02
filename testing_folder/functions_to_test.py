@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import os
 
 # Pytest - function 1
 def read_json(json_file: Path) -> dict:
@@ -10,10 +11,14 @@ def read_json(json_file: Path) -> dict:
         dict: json.load(json_file).
     """
     try:
-        with open(json_file) as data:
-            json_data = json.load(data)
-            return json_data
+        if os.path.exists(json_file):
+            with open(json_file) as data:
+                json_data = json.load(data)
+                return json_data
+        else:
+            raise FileNotFoundError
     except json.decoder.JSONDecodeError:
         return "Decoding error: file could be empty"
-    except FileNotFoundError as e:
-        return e
+
+if __name__ == "__main__":
+    print(read_json("testing_json.json"))
