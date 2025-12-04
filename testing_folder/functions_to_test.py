@@ -29,7 +29,7 @@ def write_to_json(data: dict, json_file: Path) -> None:
         None: None.
     """
     if os.path.exists(json_file):
-        with open(json_file, 'w', encoding='utf-8') as file:
+        with open(json_file, 'w') as file:
             json.dump(data, file)
     else:
         raise FileNotFoundError
