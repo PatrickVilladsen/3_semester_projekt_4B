@@ -133,7 +133,6 @@ class Database:
 
     # Samme koncept - nu bare vores event logs
     def log_event(self, source: str, message: str):
-        """Gem en hændelse/kommando (Info log) - NY FUNKTION"""
         try:
             with self.lock:
                 with self.get_connection() as conn:
