@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=800, height=480, initial-scale=1.0, user-scalable=no">
+    <title>Automatisk udluftningssystem</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Top bar -->
+    <div class="top-bar">
+        <!-- Udendørs data -->
+        <div class="outdoor-box">
+            <h3>🌤️ Udendørs</h3>
+            <div class="outdoor-columns">
+                <div class="outdoor-column">
+                    <img src="/static/images/termometer.png" alt="Temp" class="icon-medium">
+                    <span class="outdoor-value" id="outdoorTemp">-- °C</span>
+                </div>
+                <div class="outdoor-column">
+                    <img src="/static/images/fugt.png" alt="Fugt" class="icon-medium">
+                    <span class="outdoor-value" id="outdoorHum">-- %</span>
+                </div>
+                <div class="outdoor-column">
+                    <img src="/static/images/batteri.png" alt="Batteri" class="icon-medium">
+                    <span class="outdoor-value" id="outdoorBat">-- %</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Vindue status -->
+        <div class="window-status-box closed" id="windowStatus">
+            <img src="/static/images/closed.png" alt="Lukket vindue" class="window-image" id="windowImage">
+            <div class="window-text" id="windowText">Lukket</div>
+        </div>
+        
+        <!-- Klokken -->
+        <div class="clock-box">
+            <div class="clock-time" id="clockTime">--:--</div>
+            <div class="clock-date" id="clockDate">--</div>
+        </div>
+    </div>
+    
+    <!-- Data bme680 -->
+    <div class="main-content">
+        <div class="indoor-reading">
+            <div class="indoor-label">Temperatur</div>
+            <div>
+                <span class="indoor-value normal" id="indoorTemp">--</span>
+                <span class="indoor-unit">°C</span>
+            </div>
+        </div>
+        
+        <div class="indoor-reading">
+            <div class="indoor-label">Fugtighed</div>
+            <div>
+                <span class="indoor-value normal" id="indoorHum">--</span>
+                <span class="indoor-unit">%</span>
+            </div>
+        </div>
+        
+        <div class="indoor-reading">
+            <div class="indoor-label">Gas</div>
+            <div>
+                <span class="indoor-value normal" id="indoorGas">--</span>
+                <span class="indoor-unit">kΩ</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Manual kontrol knapper -->
+    <div class="manual-controls">
+        <button class="control-button btn-open-manual" onclick="sendCommand('aaben')">
+            <img src="/static/images/open.png" alt="Åben" class="button-image">
+            <span>Åben Vindue</span>
+        </button>
+        <button class="control-button btn-close-manual" onclick="sendCommand('luk')">
+            <img src="/static/images/closed.png" alt="Luk" class="button-image">
+            <span>Luk Vindue</span>
+        </button>
+    </div>
+    
+    <!-- Toast notification -->
+    <div class="toast" id="toast">
+        <span class="toast-icon" id="toastIcon">⚠️</span>
+        <span class="toast-message" id="toastMessage">YEET</span>
+    </div>
+    
+    <script src="/static/script.js"></script>
+</body>
+</html>

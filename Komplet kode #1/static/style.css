@@ -1,0 +1,285 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #000;
+    width: 800px;
+    height: 480px;
+    overflow: hidden;
+    color: white;
+}
+
+/* ========== TOP BAR ========== */
+.top-bar {
+    display: flex;
+    align-items: stretch;
+    height: 120px;
+    padding: 10px;
+    gap: 15px;
+    background: #000;
+}
+
+/* Udendørs data */
+.outdoor-box {
+    background: linear-gradient(135deg, #279afd 0%, #a7dcff 100%);
+    border-radius: 10px;
+    padding: 10px 20px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.outdoor-box h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.2);
+    margin-bottom: 3px;
+}
+
+.outdoor-columns {
+    display: flex;
+    gap: 20px;
+}
+
+.outdoor-column {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.icon-medium {
+    width: 35px;
+    height: 35px;
+    object-fit: contain;
+    background: white;
+    border-radius: 5px;
+    padding: 4px;
+}
+
+.outdoor-value {
+    font-weight: 700;
+    font-size: 14px;
+    color: rgba(255,255,255,0.95);
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* Vindue status */
+.window-status-box {
+    width: 120px;
+    border-radius: 10px;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    transition: all 0.3s;
+    margin-left: auto;
+}
+
+.window-status-box.open {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+}
+
+.window-status-box.closed {
+    background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+}
+
+.window-image {
+    width: 60px;
+    height: 60px;
+    object-fit: contain;
+    margin-bottom: 5px;
+}
+
+.window-text {
+    font-size: 16px;
+    font-weight: 700;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.2);
+}
+
+/* Klokkeslæt */
+.clock-box {
+    width: 120px;
+    background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+    border-radius: 10px;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+}
+
+.clock-time {
+    font-size: 32px;
+    font-weight: 700;
+    font-family: 'Courier New', monospace;
+}
+
+.clock-date {
+    font-size: 12px;
+    opacity: 0.8;
+    margin-top: 2px;
+}
+
+/* ========== HOVEDINDHOLD ========== */
+.main-content {
+    height: calc(480px - 140px - 90px);
+    padding: 10px;
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 40px;
+}
+
+.indoor-reading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.indoor-label {
+    font-size: 24px;
+    color: #888;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+.indoor-value {
+    font-size: 90px;
+    font-weight: 700;
+    font-family: 'Courier New', monospace;
+    transition: color 0.3s;
+}
+
+.indoor-unit {
+    font-size: 40px;
+    color: #666;
+    margin-left: 5px;
+}
+
+.indoor-value.normal {
+    color: #21da00;
+}
+
+.indoor-value.too_high {
+    color: #ffeb3b;
+    text-shadow: 0 0 20px rgba(255, 235, 59, 0.5);
+}
+
+.indoor-value.max {
+    color: #f44336;
+    text-shadow: 0 0 20px rgba(244, 67, 54, 0.5);
+}
+
+.manual-controls {
+    height: 80px;
+    padding: 0 10px 10px 10px;
+    background: #000;
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    align-items: center;
+}
+
+.control-button {
+    flex: 1;
+    max-width: 300px;
+    height: 70px;
+    border: none;
+    border-radius: 15px;
+    font-size: 20px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: all 0.2s;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+
+.control-button:active {
+    transform: scale(0.95);
+}
+
+.btn-open-manual {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    color: white;
+}
+
+.btn-close-manual {
+    background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+    color: white;
+}
+
+.button-image {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+}
+
+/* Ikke testet endnu */
+.toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: rgba(50, 50, 50, 0.95);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 25px;
+    font-size: 15px;
+    font-weight: 600;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    opacity: 0;
+    z-index: 2000;
+    transition: all 0.3s ease-out;
+    max-width: 400px;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+.toast.error {
+    background: rgba(244, 67, 54, 0.95);
+}
+
+.toast.success {
+    background: rgba(76, 175, 80, 0.95);
+}
+
+.toast.warning {
+    background: rgba(255, 152, 0, 0.95);
+}
+
+.toast.info {
+    background: rgba(33, 150, 243, 0.95);
+}
+
+.toast-icon {
+    font-size: 20px;
+}
+
+.toast-message {
+    flex: 1;
+}
