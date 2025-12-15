@@ -137,38 +137,38 @@ class Database:
                 ''')
                 
                 # Indexes for performance
-                markør.execute(
-                    'CREATE INDEX IF NOT EXISTS idx_sensor_tid '
-                    'ON sensor_data(målt_klokken)'
-                )
-                markør.execute(
-                    'CREATE INDEX IF NOT EXISTS idx_fejl_tid '
-                    'ON fejl_logs(målt_klokken)'
-                )
-                markør.execute(
-                    'CREATE INDEX IF NOT EXISTS idx_log_tid '
-                    'ON system_logs(målt_klokken)'
-                )
+                markør.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_sensor_tid
+                    ON sensor_data(målt_klokken)
+                ''')
+                markør.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_fejl_tid
+                    ON fejl_logs(målt_klokken)
+                ''')
+                markør.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_log_tid
+                    ON system_logs(målt_klokken)
+                ''')
                 
                 # Synkroniserings indexes
-                markør.execute(
-                    'CREATE INDEX IF NOT EXISTS idx_sensor_synk '
-                    'ON sensor_data(synkroniseret)'
-                )
-                markør.execute(
-                    'CREATE INDEX IF NOT EXISTS idx_fejl_synk '
-                    'ON fejl_logs(synkroniseret)'
-                )
-                markør.execute(
-                    'CREATE INDEX IF NOT EXISTS idx_log_synk '
-                    'ON system_logs(synkroniseret)'
-                )
+                markør.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_sensor_synk
+                    ON sensor_data(synkroniseret)
+                ''')
+                markør.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_fejl_synk
+                    ON fejl_logs(synkroniseret)
+                ''')
+                markør.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_log_synk
+                    ON system_logs(synkroniseret)
+                ''')
                 
                 # Enheds ID index
-                markør.execute(
-                    'CREATE INDEX IF NOT EXISTS idx_sensor_enhed '
-                    'ON sensor_data(enheds_id)'
-                )
+                markør.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_sensor_enhed
+                    ON sensor_data(enheds_id)
+                ''')
                 # debug
                 print("Database skema verificeret")
     
