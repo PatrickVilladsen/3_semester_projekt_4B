@@ -1,242 +1,431 @@
+"""
+SQLite Database modul til lagring af sensor data, stauts, logs samt overblik
+over synkroniseringsstatus med remote serveren.
+
+Dette modul implementerer en trådsikker SQLite database wrapper der håndterer:
+- Sensor data logging (temperatur, fugtighed, batteri, gas)
+- Fejl logging fra alle systemkomponenter
+- System events logging (kommandoer, status ændringer)
+- Synkroniserings tracking til remote PostgreSQL server
+- Automatisk oprydning af gammel data (>7 dage)
+- Historisk dataudtræk til grafer
+
+Arkitektur:
+    - Thread Safety: Mutex lås omkring alle database operationer
+    - Context Manager: Automatisk commit/rollback
+    - "Parameterized Queries": SQL injection beskyttelse ved brug af placeholders
+    - ACID Compliance: Enten lykkedes hele opdateringen, ellers bliver ændringerne fjernet
+    - Indexing: System-performance på målt_klokken og synkroniseret
+
+Database Skema (Matcher vores remote server):
+    sensor_data: id, enheds_id, målt_klokken, kilde, data_type, værdi, synkroniseret
+    fejl_logs: id, enheds_id, målt_klokken, kilde, fejl_besked, synkroniseret
+    system_logs: id, enheds_id, målt_klokken, kilde, besked, synkroniseret
+
+Thread Safety:
+    Alle skrive-metoder bruger self.lås til at sikre at kun en tråd
+    kan skrive ad gangen. Dette forhindrer "Database is locked" fejl.
+
+Context Manager:
+    with db.hent_forbindelse() as conn:
+        conn.execute("INSERT ...")
+    
+    Sikrer automatisk commit ved succes og rollback ved fejl.
+
+SQL Injection Beskyttelse:
+    Brug altid placeholders:
+    Sikkert:   execute("INSERT ... VALUES (?)", (værdi,))
+    Usikkert:  execute(f"INSERT ... VALUES ({værdi})")
+"""
+
 import sqlite3
 import threading
 from datetime import datetime, timedelta
 from contextlib import contextmanager
+from typing import Generator, List, Dict, Any, Optional, Tuple
+import os
 
-'''
-Vi opretter en klasse til databasen. Vores database er en sqlite database, hvilket betyder
-at vi gemmer vores logs i en database fil på vores lokale server.
-Vi bruger thread safety til filen, så der kun kan redigeres i den af en af gangen.'''
+
 class Database:
+    """
+    Trådsikker SQLite database wrapper.
     
-    #Her opretter vi så selve databasen
-    def __init__(self, db_path: str = "sensor_data.db"):
-        self.db_path = db_path
-        self.lock = threading.Lock()
-        #Her tjekker vi om databasen findes og ellers opretter vi den
-        self._init_database()
+    Gemmer data lokalt indtil det kan synkroniseres til remote server.
+    """
     
-    '''
-    Vi benytter contextmanager til vores kode som sørger for at "processer" ikke
-    fanges i databasen så den ikke kan tilgås af andre pga. vores thread safety mekanisme
-    hele funktionalitet af contextmanager beskrives i dokumentations filen.
-    Den åbner op for at vi kan bruge with og yield uden at have oprettet en klasse først.'''
+    def __init__(self, database_sti: str = "sensor_data.db") -> None:
+        """
+        Initialiserer database og opretter skema.
+        
+        Args:
+            database_sti: Sti til database filen (sensor_data.db)
+        """
+        self.database_sti: str = database_sti
+        self.lås: threading.Lock = threading.Lock()
+        
+        # Debug
+        print(f"Database initialiseret: {os.path.abspath(database_sti)}")
+        
+        # Opret skema
+        self._initialiser_database()
+    
     @contextmanager
-    # Her er fremgangsmåden for at skabe forbindelse til databasen
-    def get_connection(self):
-        # Her defineres reglerne for at skabe forbindelse til databasen.
-        # Med "check_same_thread=False" siger f.eks. at kun en tråd må tilgå ad gangen.
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        '''
-        Med sqlite3.row gør vi at når vi henter data fra databasen, så bliver det gjort i navne-værdier
-        i stedet for tal som den selv ville generere. Det gør at det er nemmere at tilføje kolonner
-        i databasen. Der står mere information med eksempel inde på dokumentations filen.'''
-        conn.row_factory = sqlite3.Row
+    def hent_forbindelse(self) -> Generator[sqlite3.Connection, None, None]:
+        """
+        Context manager der giver en database forbindelse.
+        
+        Håndterer automatisk commit/rollback og lukning af forbindelse.
+        """
+        # check_same_thread=False fordi vi bruger mutex lock i stedet
+        forbindelse = sqlite3.connect(self.database_sti, check_same_thread=False)
+        forbindelse.row_factory = sqlite3.Row
+        
         try:
-            #Med Yield for en tråd besked på at vente med at fortsætte indtil contextmanager giver lov
-            yield conn
-            #Hvis ændringenen gik fint igennem gemmes det i databasen
-            conn.commit()
-        # Hvis der skete en fejl under ændringer af databasen laver vi en rollback
-        except:
-            # rollback gør at databasen gendannes som den var før at der blev skrevet i den
-            conn.rollback()
-            # Vi "raiser" fejlen og fortæller at der skete en fejl til dem som kaldte db.get_connection()
+            yield forbindelse
+            forbindelse.commit()
+        except Exception:
+            forbindelse.rollback()
             raise
-        # Med finally fortæller vi, at "inden du smutter" så skal du lige -
         finally:
-            # "Lukke din forbindelse så den næste kan komme til"
-            conn.close()
+            forbindelse.close()
     
-    # her opretter vi en intern funktion
-    def _init_database(self):
-        # Her gennemgår vi det vi lavede før med contextmanageren - så kun en kan tilgå af gangen
-        # samt at fejl bliver håndteret. - derfor vi kan bruge "with"
-        with self.get_connection() as conn:
-            '''
-            Nu har tråden fået adgang til databasen, men får at vide hvad den skal lave herinde,
-            så får den en cursor, som fortæller at "du har nu et skriveredskab"'''
-            cursor = conn.cursor()
-            
-            # Med det skriveredskab giver vi nu besked med .execute på hvad der skal skrives.
-            # her skal der laves en table til sensor data
-            '''
-            Vi opretter en table hvis det ikke allerede findes.
-            Vi fortæller hvilke informationer der skal udfyldes
-            som er (id, timestamp, source, data_type, value og synced)
-            Id, Timestamp og synced bliver automatisk udfyldt hvis tråden ikke gør det'''
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS sensor_data (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    source TEXT NOT NULL,
-                    data_type TEXT NOT NULL,
-                    value REAL,
-                    synced INTEGER DEFAULT 0
-                )
-            ''')
-            
-            # Så en til errors
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS errors (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    source TEXT NOT NULL,
-                    error_message TEXT NOT NULL,
-                    synced INTEGER DEFAULT 0
-                )
-            ''')
-
-            # Og til sidst en med system logs
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS system_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    source TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    synced INTEGER DEFAULT 0
-                )
-            ''')
-    
-    # Her kommer funktionerne til at indskrive i vores databaser
-
-    # Først har vi vores log_sensor table
-    # Her ønsker vi 3 værdier da vi selv udfylder resten
-    def log_sensor(self, source: str, data_type: str, value: float):
-        try:
-            # Vi har lock så det kun er en tråd der kan tilgå af gangen
-            with self.lock:
-                # De får adgang til databasen og bliver sat i yield hvis der er kø
-                with self.get_connection() as conn:
-                    # De skriver nu deres data ind - VALUES (?, ?, ?) beskytter mod SQL-injektion
-                    # Jeg forklarer mere i dokumentation_info hvordan det beskytter os
-                    conn.execute(
-                        'INSERT INTO sensor_data (source, data_type, value) VALUES (?, ?, ?)',
-                        (source, data_type, value)
+    def _initialiser_database(self) -> None:
+        """
+        Opretter tabeller og indexes hvis de ikke findes.
+        
+        Bruger "IF NOT EXISTS" så det er sikkert at køre ved hver opstart.
+        """
+        with self.lås:
+            with self.hent_forbindelse() as forbindelse:
+                markør = forbindelse.cursor()
+                
+                # Sensor data tabel
+                markør.execute('''
+                    CREATE TABLE IF NOT EXISTS sensor_data (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        enheds_id TEXT NOT NULL,
+                        målt_klokken DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        kilde TEXT NOT NULL,
+                        data_type TEXT NOT NULL,
+                        værdi REAL,
+                        synkroniseret INTEGER DEFAULT 0
                     )
-        # Hvis der sker en fejl her ønsker vi at koden kører videre, da dette er en database fejl.
-        # Det vil skabe et loop af fejl i databasen som vi ikke ønsker, derfor bruger vi pass
-        except:
+                ''')
+                
+                # Fejl logs tabel
+                markør.execute('''
+                    CREATE TABLE IF NOT EXISTS fejl_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        enheds_id TEXT NOT NULL,
+                        målt_klokken DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        kilde TEXT NOT NULL,
+                        fejl_besked TEXT NOT NULL,
+                        synkroniseret INTEGER DEFAULT 0
+                    )
+                ''')
+                
+                # System logs tabel
+                markør.execute('''
+                    CREATE TABLE IF NOT EXISTS system_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        enheds_id TEXT NOT NULL,
+                        målt_klokken DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        kilde TEXT NOT NULL,
+                        besked TEXT NOT NULL,
+                        synkroniseret INTEGER DEFAULT 0
+                    )
+                ''')
+                
+                # Indexes for performance
+                markør.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_sensor_tid '
+                    'ON sensor_data(målt_klokken)'
+                )
+                markør.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_fejl_tid '
+                    'ON fejl_logs(målt_klokken)'
+                )
+                markør.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_log_tid '
+                    'ON system_logs(målt_klokken)'
+                )
+                
+                # Synkroniserings indexes
+                markør.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_sensor_synk '
+                    'ON sensor_data(synkroniseret)'
+                )
+                markør.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_fejl_synk '
+                    'ON fejl_logs(synkroniseret)'
+                )
+                markør.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_log_synk '
+                    'ON system_logs(synkroniseret)'
+                )
+                
+                # Enheds ID index
+                markør.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_sensor_enhed '
+                    'ON sensor_data(enheds_id)'
+                )
+                # debug
+                print("Database skema verificeret")
+    
+    def gem_sensor_data(
+        self,
+        enheds_id: str,
+        kilde: str,
+        data_type: str,
+        værdi: float
+    ) -> None:
+        """
+        Logger en sensor måling der skal til at skrives ind i databasen.
+        
+        Args:
+            enheds_id: ID på enheden (f.eks. 'esp32_sensor')
+            kilde: Sensoren (f.eks. 'DHT11', 'BME680')
+            data_type: Typen ('temperatur', 'luftfugtighed', 'batteri', 'gas')
+            værdi: Målingen som float
+        """
+        try:
+            with self.lås:
+                with self.hent_forbindelse() as forbindelse:
+                    forbindelse.execute(
+                        'INSERT INTO sensor_data '
+                        '(enheds_id, kilde, data_type, værdi, synkroniseret) '
+                        'VALUES (?, ?, ?, ?, 0)',
+                        (enheds_id, kilde, data_type, værdi)
+                    )
+        except Exception:
+            # ignorer fejl for at undgå crashes
             pass
     
-    # Samme koncept - nu bare vores error logs
-    def log_error(self, source: str, error_message: str):
+    def gem_fejl(
+        self,
+        enheds_id: str,
+        kilde: str,
+        fejl_besked: str
+    ) -> None:
+        """
+        Logger en fejlbesked der skal til at skrives ind i databasen.
+        
+        Args:
+            enheds_id: Enheden der oplevede fejlen
+            kilde: Komponenten (f.eks. 'MQTT', 'BME680')
+            fejl_besked: Beskrivelse af fejlen
+        """
         try:
-            with self.lock:
-                with self.get_connection() as conn:
-                    conn.execute(
-                        'INSERT INTO errors (source, error_message) VALUES (?, ?)',
-                        (source, error_message)
+            with self.lås:
+                with self.hent_forbindelse() as forbindelse:
+                    forbindelse.execute(
+                        'INSERT INTO fejl_logs '
+                        '(enheds_id, kilde, fejl_besked, synkroniseret) '
+                        'VALUES (?, ?, ?, 0)',
+                        (enheds_id, kilde, fejl_besked)
                     )
-        except Exception as e:
-            pass
-
-    # Samme koncept - nu bare vores event logs
-    def log_event(self, source: str, message: str):
-        """Gem en hændelse/kommando (Info log) - NY FUNKTION"""
-        try:
-            with self.lock:
-                with self.get_connection() as conn:
-                    conn.execute(
-                        'INSERT INTO system_logs (source, message) VALUES (?, ?)',
-                        (source, message)
-                    )
-        except Exception as e:
+        except Exception:
             pass
     
-    # Nu skal vi så hente data fra databasen så vi kan sende det videre til vores remote server
-    def get_unsynced_data(self):
-        # Vi starter med at tilgå databasen gennem vores contextmanager
-        with self.get_connection() as conn:
-            # Vi får igen arbejdsredskabet
-            cursor = conn.cursor()
+    def gem_system_log(
+        self,
+        enheds_id: str,
+        kilde: str,
+        besked: str
+    ) -> None:
+        """
+        Logger et system event der skal til at skrives ind i databasen.
+        
+        Bruges til vigtige events som ikke er fejl (startup, kommandoer, etc.)
+        
+        Args:
+            enheds_id: Enheden der genererede eventet
+            kilde: Komponenten (f.eks. 'Main', 'ClimateCtrl')
+            besked: Hvad der skete
+        """
+        try:
+            with self.lås:
+                with self.hent_forbindelse() as forbindelse:
+                    forbindelse.execute(
+                        'INSERT INTO system_logs '
+                        '(enheds_id, kilde, besked, synkroniseret) '
+                        'VALUES (?, ?, ?, 0)',
+                        (enheds_id, kilde, besked)
+                    )
+        except Exception:
+            pass
+    
+    def hent_usynkroniseret_data(self) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Henter data der mangler at blive uploadet til remote server.
+        
+        Returnerer data i format der matcher remote API payload.
+        """
+        with self.hent_forbindelse() as forbindelse:
+            markør = forbindelse.cursor()
             
-            # Nu henter vi alt fra sensor_data table'en som vi ikke har markeret som synkroniseret
-            cursor.execute('SELECT * FROM sensor_data WHERE synced = 0')
-            # Vi pakker hver række (row) som er synced = 0 i sensor_data table'en ind som et dictionary
-            # fetchall gør at vi henter alle rækkerne
-            sensor_data = [dict(row) for row in cursor.fetchall()]
+            # Hent usynkroniseret data fra alle tabeller
+            markør.execute(
+                'SELECT * FROM sensor_data WHERE synkroniseret = 0'
+            )
+            sensor_data = [dict(række) for række in markør.fetchall()]
             
-            # Her er det så fra error table
-            cursor.execute('SELECT * FROM errors WHERE synced = 0')
-            errors = [dict(row) for row in cursor.fetchall()]
-
-            # og så fra system logs table
-            cursor.execute('SELECT * FROM system_logs WHERE synced = 0')
-            system_logs = [dict(row) for row in cursor.fetchall()]
+            markør.execute(
+                'SELECT * FROM fejl_logs WHERE synkroniseret = 0'
+            )
+            fejl = [dict(række) for række in markør.fetchall()]
             
-            # Til sidst returnerer vi så en dictionary over de 3 nye lister
-            # Og hver liste indeholder så det antal dictionaries der svar til hvor
-            # mange rækker i databasen der var markeres med "synced = 0"
+            markør.execute(
+                'SELECT * FROM system_logs WHERE synkroniseret = 0'
+            )
+            logs = [dict(række) for række in markør.fetchall()]
+            
+            # Debug
+            total = len(sensor_data) + len(fejl) + len(logs)
+            if total > 0:
+                print(f"Henter {total} usynkroniserede rækker")
+            
             return {
                 'sensor_data': sensor_data,
-                'errors': errors,
-                'system_logs': system_logs
+                'fejl_logs': fejl,
+                'system_logs': logs
             }
     
-    # Nu skal vi så markerer den data vi lige har returneret som synced - sync_client.py har netop behandlet det
-    def mark_as_synced(self, sensor_ids: list, error_ids: list, log_ids: list = None):
-        # Hvis vi ikke får en liste, så opretter vi en tom liste, så koden ikke crasher da den forventer en liste at behandle
+    def markér_som_synkroniseret(
+        self,
+        sensor_ids: Optional[List[int]] = None,
+        fejl_ids: Optional[List[int]] = None,
+        log_ids: Optional[List[int]] = None
+    ) -> None:
+        """
+        Markerer rækker som uploadet efter succesfuld synkronisering.
+        
+        Kaldes af sync_client når remote server har bekræftet modtagelse.
+        """
+        if sensor_ids is None:
+            sensor_ids = []
+        if fejl_ids is None:
+            fejl_ids = []
         if log_ids is None:
             log_ids = []
-
-        # Nu skal vi så igang med at ændre synced feltet
-        # Vi benytter selvfølgelig en lås, så vi ikke går ind før der er plads
-        with self.lock:
-            # Vi får adgang via contextmanager
-            with self.get_connection() as conn:
-                # Vi tjekker om listen indeholdt sensor_ids - hvis den gjorde fortsætter vi
-                if sensor_ids:
-                    '''
-                    Nu bliver det lidt tricky - vi laver en string med placeholders igen fordi at vi ikke ønsker
-                    At forkerte værdi skal kunne udføre en SQL injection
-                    Der for laver vi en string med antallet af værdier som vi modtager fra listen.
-                    Altså en liste der ser sådan her ud [1, 6, 10] ville gøre placeholder til en string
-                    der ser sådan her ud "?, ?, ?"'''
-                    placeholders = ','.join('?' * len(sensor_ids))
-                    '''
-                    Nu kan vi så rette databasen. Vi siger at vi skal ændre synced til 1 på "?, ?, ?
-                    Hvor så at sensor_ids er data over de id'er der skal rettes - feks. id 1, 6, 10
-                    Dette gør at i stedet for at der ville kunne udføres en sql injection hvis nu at
-                    det ene id var en SQL kommando, så tager den i stedet og kigger efter id'et da den nu ved at det er data'''
-                    conn.execute(f'UPDATE sensor_data SET synced = 1 WHERE id IN ({placeholders})', sensor_ids)
-                
-                # Samme koncept bare med error_ids
-                if error_ids:
-                    placeholders = ','.join('?' * len(error_ids))
-                    conn.execute(f'UPDATE errors SET synced = 1 WHERE id IN ({placeholders})', error_ids)
-
-                # Samme koncept bare med log_ids
-                if log_ids:
-                    placeholders = ','.join('?' * len(log_ids))
-                    conn.execute(f'UPDATE system_logs SET synced = 1 WHERE id IN ({placeholders})', log_ids)
-    
-    # Nu skal vi så slette rækkerne fra vores database tables som er ældre end 7 dage
-    
-    # Vi opretter en funktion og sætter days til at være 7
-    def cleanup_old_data(self, days: int = 7):
         
-        # Først finder vi vores cuf-off dato, som så er 7 dage siden fra dags dato
-        cutoff = datetime.now() - timedelta(days=days)
+        with self.lås:
+            with self.hent_forbindelse() as forbindelse:
+                
+                # Opdater sensor data
+                if sensor_ids:
+                    pladsholdere = ','.join('?' * len(sensor_ids))
+                    forbindelse.execute(
+                        f'UPDATE sensor_data SET synkroniseret = 1 '
+                        f'WHERE id IN ({pladsholdere})',
+                        sensor_ids
+                    )
+                    print(f"Markeret {len(sensor_ids)} sensor rækker")
+                
+                # Opdater fejl
+                if fejl_ids:
+                    pladsholdere = ','.join('?' * len(fejl_ids))
+                    forbindelse.execute(
+                        f'UPDATE fejl_logs SET synkroniseret = 1 '
+                        f'WHERE id IN ({pladsholdere})',
+                        fejl_ids
+                    )
+                    print(f"Markeret {len(fejl_ids)} fejl rækker")
+                
+                # Opdater logs
+                if log_ids:
+                    pladsholdere = ','.join('?' * len(log_ids))
+                    forbindelse.execute(
+                        f'UPDATE system_logs SET synkroniseret = 1 '
+                        f'WHERE id IN ({pladsholdere})',
+                        log_ids
+                    )
+                    print(f"Markeret {len(log_ids)} log rækker")
+    
+    def hent_datahistorik(
+        self,
+        data_type: str,
+        dage: int = 7
+    ) -> List[Dict[str, Any]]:
+        """
+        Henter historisk data til grafer.
+        
+        Args:
+            data_type: Typen ('temperatur', 'luftfugtighed', 'batteri', 'gas')
+            dage: Hvor langt tilbage (default: 7)
+        
+        Returns:
+            Liste af målinger sorteret efter tid
+        """
+        cutoff = datetime.now() - timedelta(days=dage)
+        
+        with self.hent_forbindelse() as forbindelse:
+            markør = forbindelse.cursor()
+            markør.execute('''
+                SELECT målt_klokken, værdi, kilde, enheds_id
+                FROM sensor_data
+                WHERE data_type = ? AND målt_klokken >= ?
+                ORDER BY målt_klokken ASC
+            ''', (data_type, cutoff))
+            
+            return [dict(række) for række in markør.fetchall()]
+    
+    def ryd_gammel_data(self, dage: int = 7) -> Tuple[int, int, int]:
+        """
+        Sletter gammel synkroniseret data for at spare plads.
+        
+        Sletter kun data der er ældre end 'dage' (7) OG er synkroniseret.
+        Dette sikrer at vi aldrig sletter data uden backup.
+        
+        Returns:
+            Antal slettede rækker: (sensor, fejl, logs)
+        """
+        cutoff = datetime.now() - timedelta(days=dage)
         
         try:
-            # Vi skal havde adgang, så vi er de eneste der skriver
-            with self.lock:
-                # Vi får plads af contextmanager
-                with self.get_connection() as conn:
-                    # Her sletter vi så fra sensor_data table hvor at timestamp er før ? som er vores placeholder for cutoff
-                    # Vi ønsker også at synced er 1 da vi ikke vil slette data som remote serveren ikke har modtaget
-                    conn.execute('DELETE FROM sensor_data WHERE timestamp < ? AND synced = 1', (cutoff,))
+            with self.lås:
+                with self.hent_forbindelse() as forbindelse:
+                    markør = forbindelse.cursor()
                     
-                    # Samme koncept med error table
-                    conn.execute('DELETE FROM errors WHERE timestamp < ? AND synced = 1', (cutoff,))
-    
-                    # og med system table
-                    conn.execute('DELETE FROM system_logs WHERE timestamp < ? AND synced = 1', (cutoff,))
+                    # Slet gammel sensor data
+                    markør.execute(
+                        'DELETE FROM sensor_data '
+                        'WHERE målt_klokken < ? AND synkroniseret = 1',
+                        (cutoff,)
+                    )
+                    sensor = markør.rowcount
                     
-        except:
-            # Da vi ikke ønsker at låse databasen i et loop siger vi bare pass ved fejl
-            pass
+                    # Slet gamle fejl
+                    markør.execute(
+                        'DELETE FROM fejl_logs '
+                        'WHERE målt_klokken < ? AND synkroniseret = 1',
+                        (cutoff,)
+                    )
+                    fejl = markør.rowcount
+                    
+                    # Slet gamle logs
+                    markør.execute(
+                        'DELETE FROM system_logs '
+                        'WHERE målt_klokken < ? AND synkroniseret = 1',
+                        (cutoff,)
+                    )
+                    logs = markør.rowcount
+                    
+                    print(f"Cleanup: Slettet {sensor + fejl + logs} rækker")
+                    return (sensor, fejl, logs)
+        
+        except Exception as e:
+            print(f"Cleanup fejl: {e}")
+            return (0, 0, 0)
 
-# Global Singleton Instance - opretter og sikrer at vi kun har en enkelt database tråd
-db = Database()
+
+# Global instans
+db: Database = Database()
+"""
+Global database instans brugt af hele applikationen.
+"Falsk" singleton instans - der kan oprettes nye instanser med denne instans
+
+Import:
+    from database import db
+    db.gem_sensor_data('esp32_sensor', 'DHT11', 'temperatur', 22.5)
+"""

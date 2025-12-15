@@ -1,7 +1,46 @@
+"""
+MQTT Klient modul til IoT-"Edge Gateway" funktionalitet på vores RPi5.
+
+Dette modul fungerer som broen mellem de "dumme" enheder (ESP32) og
+den "kloge" server (RPi5). Den oversætter letvægts MQTT-beskeder til
+strukturerede database-rækker.
+
+Hovedansvarsområder:
+    1. Ingestion: Modtager rå data fra ESP32 enheder via MQTT
+    2. Validering: Sikrer at data er indenfor tilladte grænser
+    3. Persistens: Gemmer straks data i SQLite (via database.py) for sikkerhed
+    4. Live View: Opdaterer intern hukommelse (data_opbevaring) til WebSockets
+    5. Batching: Grupperer målinger for at opnå mindre trafik
+
+Protokol:
+    - Broker: Mosquitto på localhost (192.168.4.1)
+    - QoS 1 (At Least Once): Vi accepterer dubletter, men aldrig datatab
+    - Topics: sensor/temperatur, sensor/luftfugtighed, sensor/batteri,
+              vindue/status, vindue/kommando, fejlbesked
+
+Arkitektur:
+    ESP32 (MQTT Pub) -> [MQTT Broker] -> [MQTT Klient (Sub)]
+    -> Validering -> Database + Intern hukommelse
+
+Fejlhåndtering:
+    - Netværk: Automatisk reconnection med backoff
+    - Data: Ugyldige målinger (f.eks. temp 200°C) fejlhåndteres og logges
+    - JSON: Korrupte pakker fanges uden at crashe tråden
+
+Threading:
+    Vi kører som daemon thread for at sikre non-blocking funktionalitet.
+    Hovedprogrammet kan fortsætte mens vi håndterer MQTT data i baggrunden.
+
+Note:
+    Dette modul kræver en kørende Mosquitto broker på MQTT_BROKER_HOST.
+    Start broker med: sudo systemctl start mosquitto
+"""
+
 import threading
 import time
 import json
 import re
+from typing import Optional, Dict, Any, Callable, Pattern
 import paho.mqtt.client as mqtt
 from sensor_data import data_opbevaring
 from database import db
@@ -9,287 +48,889 @@ from config import (
     MQTT_BROKER_HOST,
     MQTT_BROKER_PORT,
     TOPIC_SENSOR_TEMP,
-    TOPIC_SENSOR_HUM,
+    TOPIC_SENSOR_FUGT,
     TOPIC_SENSOR_BAT,
     TOPIC_VINDUE_STATUS,
-    TOPIC_VINDUE_COMMAND,
-    TOPIC_ERROR
+    TOPIC_VINDUE_KOMMANDO,
+    TOPIC_FEJLBESKED,
+    ENHEDS_ID
 )
 
-# Regex patterns til validering
-# validerer at tallet er float
-FLOAT_PATTERN = re.compile(r'^-?\d+(\.\d+)?$')
-# Validerer at tallet er positivt
-POSITIV_PATTERN = re.compile(r'^\d+$')
 
-# Her tjekkes og valideres indkommende værdier fra mqtt
-def valider_værdi(value, min_val=None, max_val=None):
-    if value is None:
-        #Hvis der ikke er nogen værdi gør vi ikke mere
-        return None
-    # Her laver vi typekonvertering og gør vores værdi til string og fjerner mellemrum med .strip
-    # Da vores regex forventer at tallet ikke har mellemrum er dette step vigtigt.
-    # Et eksempel er hvis der blev modtaget " 12.5 " ville det blive lavet om til "12.5"
-    værdi_str = str(value).strip()
+# Konfiguration af regex patterns
+
+FLOAT_VALIDERING: Pattern[str] = re.compile(r'^-?\d+(\.\d+)?$')
+"""
+Regex pattern til validering af float værdier.
+
+Tillader:
+    - Positive tal: "42", "3.14"
+    - Negative tal: "-10", "-273.15"
+    - Decimaler: "0.5", "100.0"
+
+Afviser:
+    - Bogstaver: "abc", "12a"
+    - Uægte tal: "12.3.4"
+"""
+
+POSITIV_VALIDERING: Pattern[str] = re.compile(r'^\d+$')
+"""
+Regex pattern til validering af positive heltal.
+
+Bruges til procenter (0-100) og positioner.
+
+Tillader:
+    - Positive heltal: "0", "42", "100"
+
+Afviser:
+    - Negative: "-5"
+    - Decimaler: "12.5"
+    - Bogstaver: "abc"
+"""
+
+# Konfiguration af ESP32 sensor ID
+
+ESP32_SENSOR_ID = 'esp32_sensor'
+"""
+Hardkodet ID for vores udendørs ESP32 sensor (DHT11).
+
+I en større løsning ville ESP32 sende sit ID med i alle pakker.
+P.t. har vi kun én udesensor så vi hardcoder dens ID her.
+
+Note:
+    Dette skal matche ENHEDS_ID fra ESPsensor.py
+"""
+
+# Konfiguration af batching
+
+BATCH_TIMEOUT = 2.0
+"""
+Maximum ventetid i sekunder før en ufuldstændig batch sendes.
+
+Vi venter på at få temp, fugt og bat før vi opdaterer frontend,
+men hvis det tager over 2 sekunder sender vi det vi har.
+Dette gør at vi ikke blokerer opdateringer for evigt hvis én
+sensor fejler.
+"""
+
+# Konfiguration af reconnection
+
+MAX_FORBINDELSES_FORSØG = 5
+"""
+Maximum antal forbindelsesforsøg før vi giver op.
+
+Efter 5 fejlede forsøg antages det at broker er nede og
+systemet logger fejlen.
+"""
+
+GENFORSØGS_DELAY = 5
+"""Sekunder at vente mellem forbindelsesforsøg."""
+
+KEEPALIVE_INTERVAL = 60
+"""
+Sekunder mellem keepalive ping til broker.
+
+Hvis broker ikke hører fra os i 1.5 * KEEPALIVE_INTERVAL (90 sekunder)
+antager den at forbindelsen er død og lukker den.
+"""
+
+# Validerings funktioner
+
+def valider_værdi(
+    værdi: Any,
+    min_værdi: Optional[float] = None,
+    max_værdi: Optional[float] = None
+) -> Optional[float]:
+    """
+    Konverterer og validerer en sensor måling.
     
-    # Her tjekker vi om værdien passer med vores Regex validering
-    if not FLOAT_PATTERN.match(værdi_str):
+    Hvis en sensor går i stykker, kan den finde på at sende ekstremværdier
+    (f.eks. -999 eller NaN). Denne funktion filtrerer støj fra så vi
+    ikke gemmer urealistiske værdier.
+    
+    Args:
+        værdi: Rå værdi fra MQTT payload (kan være str, int, float)
+        min_værdi: Minimum tilladt værdi. None = ingen nedre grænse
+        max_værdi: Maksimum tilladt værdi. None = ingen øvre grænse
+    
+    Returns:
+        Valideret float værdi, eller None hvis ugyldigt
+    
+    Validation Steps:
+        1. Konverter til string og trim whitespace
+        2. Tjek format med regex (tillader negative og decimaler)
+        3. Konverter til float
+        4. Tjek min/max grænser
+    
+    Eksempler:
+        valider_værdi("23.5", -40, 85) -> 23.5
+        valider_værdi(" 12.3 ", 0, 100) -> 12.3  # Trimmer whitespace
+        valider_værdi("150", 0, 100) -> None     # Over max
+        valider_værdi("abc", 0, 100) -> None     # Ikke et tal
+        valider_værdi("-273.15", -300, 100) -> -273.15  # Negative OK
+    
+    Note:
+        Returnerer None ved fejl i stedet for at raise exception.
+        Dette gør det lettere at håndtere ugyldige data fra ESP32 ved at
+        springe individuelle målinger over uden at afvise hele payload'en.
+    """
+    if værdi is None:
         return None
     
-    # Her tjekkes der om tallene overskrider de min eller max værdier de burde kunne output
+    # Rens for mellemrum og konverter til string
+    værdi_str = str(værdi).strip()
+    
+    # Tjek format med regex
+    if not FLOAT_VALIDERING.match(værdi_str):
+        return None
+    
     try:
-        num = float(værdi_str)
-        if min_val is not None and num < min_val:
-            return None
-        if max_val is not None and num > max_val:
-            return None
-        return num
-    #Error handling
-    except (ValueError, TypeError):
-        return None
-
-#Den her bruges vi til at tjekke om et tal er mellem 0 og 100, det bruger vi til batteriprocent og fugtighed.
-def valider_integer(value, min_val=0, max_val=100):
-    if value is None:
-        return None
-    # Samme forklaring som længere oppe
-    value_str = str(value).strip()
-    
-    # Vi sammenligner med vores Regex validering for at se om tallet er positivt.
-    if not POSITIV_PATTERN.match(value_str):
-        return None
-    
-    # og til sidst tjekker vi max og min værdier
-    try:
-        num = int(value_str)
-        if num < min_val or num > max_val:
-            return None
-        return num
-    except (ValueError, TypeError):
-        return None
-
-'''
-Vi opretter en klasse til MQTT som gør brug af pythons "Thread" for concurrency.
-Det betyder også at alle objekter der laves ud fra klassen kører med threads.
-Vi ønsker at bruge Threads da MQTT så asynkront kan lytte efter indgående beskeder.
-Threads giver også mulighed for at styrer funktionaliteten med f.eks. .start()
-og vores graceful shutdown fra main.py'''
-class MQTTClient(threading.Thread):
-    '''
-    Her bruger vi netop funktionalitet fra Thread -
-    __init__ kalder konstruktøren fra "parent class" - som er (threading.Thread)
-    super() sikrer at konstruktøren for "parent class" - threading.Thread kaldes først, før vi kører videre'''
-    def __init__(self):
-        '''daemon=True skaber en daemon-tråd som gør at vi kan lukke koden
-        selvom at denne tråd stadig kører - det hjælper med vores graceful shutdown.
-        name= gør at vi giver tråden et navn, så vi nemt kan finde fejl i error handling'''
-        super().__init__(daemon=True, name="MQTT-Client")
-        #Her opsætter vi den reelle mqtt client
-        self.client = mqtt.Client()
-        # Disse 2 er fra paho MQTT-biblioteket og vi bruger dem til hændelser så det tjekkes asynktront
-        self.client.on_connect = self.on_connect
-        self.client.on_message = self.on_message
-        #Sættes til True når der er forbindelse længere nede
-        self.connected = False
-        # Bruges i main.py når vi skal slukke for mqtt som følge af graceful shutdown
-        self.running = True
-        # Placeholder til adressen som gives i main.py til at PUSH'e nye beskeder fra MQTT til APP.py og altså til frontend
-        self._websocket_callback = None
+        # Konverter til float
+        nummer = float(værdi_str)
         
-        # Vi opretter en funktion der giver os mulighed for at definere callback-adressen snere i main.py
-        # Denne metode kaldes for en "Setter" og har som job at sætte værdien af en intern variabel.
-    def set_websocket_callback(self, callback):
+        # Tjek grænser
+        if min_værdi is not None and nummer < min_værdi:
+            return None
+        if max_værdi is not None and nummer > max_værdi:
+            return None
+        
+        return nummer
+        
+    except (ValueError, TypeError):
+        return None
+
+
+def valider_heltal(
+    værdi: Any,
+    min_værdi: int = 0,
+    max_værdi: int = 100
+) -> Optional[int]:
+    """
+    Validering specifikt til procenter (0-100) og heltal.
+    
+    Bruges til fugtighed, batteri og motor positioner hvor
+    vi kun accepterer hele tal uden decimaler.
+    
+    Args:
+        værdi: Rå værdi fra MQTT payload
+        min_værdi: Minimum tilladt værdi (standard: 0)
+        max_værdi: Maksimum tilladt værdi (standard: 100)
+    
+    Returns:
+        Valideret int-værdi, eller None hvis ugyldigt
+    
+    Validation Steps:
+        1. Konverter til string og trim whitespace
+        2. Tjek format med regex (kun positive heltal)
+        3. Konverter til int
+        4. Tjek min/max grænser
+    
+    Eksempler:
+        valider_heltal("85", 0, 100) -> 85
+        valider_heltal(" 42 ", 0, 100) -> 42  # Trimmer whitespace
+        valider_heltal("150", 0, 100) -> None  # Over max
+        valider_heltal("12.5", 0, 100) -> None  # Decimaler ikke tilladt
+        valider_heltal("-5", 0, 100) -> None   # Negative ikke tilladt
+    
+    Note:
+        Default range 0-100 passer til de fleste use cases i vores tilfælde:
+        - Fugtighed: 0-100%
+        - Batteri: 0-100%
+        - Motor position bruger custom grænser
+    """
+    if værdi is None:
+        return None
+    
+    # Rens og konverter til string
+    værdi_str = str(værdi).strip()
+    
+    # Tjek format med regex (kun positive heltal)
+    if not POSITIV_VALIDERING.match(værdi_str):
+        return None
+    
+    try:
+        # Konverter til integer
+        nummer = int(værdi_str)
+        
+        # Tjek grænser
+        if nummer < min_værdi or nummer > max_værdi:
+            return None
+        
+        return nummer
+        
+    except (ValueError, TypeError):
+        return None
+
+
+# MQTT Klient klasse
+
+class MQTTKlient(threading.Thread):
+    """
+    Trådbaseret MQTT subscriber.
+    
+    Vi kører uafhængigt af hovedprogrammet for at sikre at vi aldrig
+    misser en besked, selvom RPi'en har travlt med andet (f.eks. database
+    writes eller WebSocket broadcasts).
+    
+    Threading Model:
+        - Daemon thread: Lukker automatisk når main program stopper
+        - Non-blocking: Hovedprogrammet kan fortsætte mens vi kører MQTT
+        - Thread-safe: Paho's loop_start() håndterer concurrency internt
+    
+    Lifecycle:
+        1. __init__(): Konfigurer callbacks og state
+        2. start(): Start tråden (kalder run())
+        3. run(): Forbind til broker og kør event loop
+        4. on_connect(): Subscribe til topics når forbindelse etableres
+        5. on_message(): Håndter indkommende beskeder
+        6. stop(): Luk forbindelse og stop tråd
+    
+    State Management:
+        - self.forbundet: Tracker om vi har aktiv broker forbindelse
+        - self.kører: Er et "Flag" der kontrollerer vores main loop (tilstand)
+        - self._sensor_batch: Tracker hvilke målinger vi mangler før update
+    
+    Batching Strategy:
+        ESP32 sender temp, fugt og bat som 3 separate beskeder.
+        Vi venter på alle 3 inden vi opdaterer frontend for at reducere
+        WebSocket traffic. Hvis det tager over BATCH_TIMEOUT sender vi
+        det vi har.
+    
+    Note:
+        Paho MQTT bruger sin egen baggrundstråd (loop_start()) til
+        netværk I/O. Vores Thread wrapper (MQTTKLient-kassen) holder styr på
+        reconnection og selve "livscyklusen".
+    """
+    
+    def __init__(self) -> None:
+        """
+        Initialiserer vores MQTT klient og konfigurerer callbacks.
+        
+        Opsætning:
+            - Daemon thread: Lukker automatisk med main program
+            - Paho callbacks: on_connect og on_message
+            - State flags: forbundet, kører
+            - Batching state: Tracker hvilke målinger vi har modtaget
+        
+        Note:
+            Vi forbinder ikke til broker endnu - det sker i run().
+            Dette tillader opbygning uden at blokere.
+        """
+        super().__init__(daemon=True, name="MQTT-Klient")
+        
+        # Paho MQTT client opsætning
+        self.klient: mqtt.Client = mqtt.Client()
+        self.klient.on_connect = self.on_connect
+        self.klient.on_message = self.on_message
+        
+        # Tilstands-flags
+        self.forbundet: bool = False
+        self.kører: bool = True
+        
+        # Callback til WebSockets (sættes fra main.py)
+        self._websocket_callback: Optional[Callable[[str], None]] = None
+        """
+        Er en privat instansvariabel, der opbevarer funktionen, som vi kalder,
+        når ny data skal sendes videre til WebSockets.
+        """
+        
+        # Batching state: Tracker hvilke sensor målinger vi har modtaget
+        self._sensor_batch: Dict[str, bool] = {
+            'temp': False,
+            'fugt': False,
+            'bat': False
+        }
+        """Er en privat instansvariabel der opretter em tjekliste for vores batching"""
+
+        self._sidste_batch_tid: float = 0
+        """Er en privat instansvariabel der fungerer som vores "stopur" i forhold til batching"""
+        
+        # Debug
+        print("MQTT klient initialiseret")
+    
+    def sæt_websocket_callback(self, callback: Callable[[str], None]) -> None:
+        """
+        Opretter en funktion der binder vores backend og frontend sammen med callback.
+        
+        Denne callback kaldes når vi har nye data klar til frontend.
+        Den håndterer asynkron kommunikation mellem vores MQTT tråd og
+        WebSocket event loop'en.
+        
+        Args:
+            callback: Async funktion der tager opdaterings_type ('sensor', 'vindue', 'fejl')
+        
+        Eksempel:
+            async def broadcast_opdatering(opdaterings_type: str):
+                await websocket_manager.broadcast(opdaterings_type)
+            
+            mqtt_klient.sæt_websocket_callback(broadcast_opdatering)
+        
+        Note:
+            Kaldes fra main.py efter vores WebSocket manager er startet op
+            Callback skal være async da den skal indsættet i asyncio event loop.
+        """
         self._websocket_callback = callback
-        
-    # Når en client forbinder tjekkes der her om der blev skabt forbindelse
-    def on_connect(self, client, userdata, flags, rc):
-        # en rc på 0 betyder CONNACK_ACCEPTED og altså at der blev skabt forbindelse.
-        if rc == 0:
-            self.connected = True
-            
-            # Den nye client subcriber på alle vores topics
-            client.subscribe(TOPIC_SENSOR_TEMP)
-            client.subscribe(TOPIC_SENSOR_HUM)
-            client.subscribe(TOPIC_SENSOR_BAT)
-            client.subscribe(TOPIC_VINDUE_STATUS)
-            client.subscribe(TOPIC_ERROR) 
-            
-        else:
-            #Laves om til error_logs på senere tidspunkt
-            db.log_error('MQTT', f"Fejlkode: {rc}")
-
+        print("WebSocket callback konfigureret")
     
-    # Her modtager, tjekker og validerer vi alle beskeder der modtages
-    def on_message(self, client, userdata, msg):
-
+    def on_connect(
+        self,
+        klient: mqtt.Client,
+        brugerdata: Any,    # Påtvunget fra paho
+        flags: Dict[str, Any],  # Påtvunget fra paho
+        returkode: int
+    ) -> None:
+        """
+        Callback der kaldes automatisk når vi får forbindelse til broker.
+        
+        Denne funktion kaldes af Paho når forbindelsen er etableret.
+        Vi bruger den til at subscribe til alle vores relevante topics.
+        
+        Args:
+            klient: MQTT client instance
+            brugerdata: User-defined data (bruges ikke)
+            flags: Connection flags fra broker (bruges ikke)
+            returkode: Connection result code (0 = success)
+        
+        Return Codes:
+            0: Connection successful
+            1: Connection refused - incorrect protocol version
+            2: Connection refused - invalid client identifier
+            3: Connection refused - server unavailable
+            4: Connection refused - bad username or password
+            5: Connection refused - not authorized
+        
+        Subscription Strategi:
+            Vi subscriber kun når vi ved at forbindelsen er godkendt (returkode 0).
+            Dette genskaber også vores subscriptions automatisk ved reconnect, da
+            on_connect kaldes hver gang forbindelsen etableres.
+        
+        QoS Level:
+            QoS 1 = "At Least Once" - Vi vil være sikre på at modtage beskeden,
+            selv hvis det betyder vi får dubletter. Dubletter håndteres i
+            on_message ved at tjekke timestamps.
+        
+        Note:
+            Paho håndterer reconnection automatisk, så denne funktion
+            kan kaldes flere gange i løbet af programmets levetid.
+        """
+        if returkode == 0:
+            # Forbindelse successful
+            self.forbundet = True
+            
+            # Subscribe til alle vores relevante topics med QoS 1
+            klient.subscribe(TOPIC_SENSOR_TEMP, qos=1)
+            klient.subscribe(TOPIC_SENSOR_FUGT, qos=1)
+            klient.subscribe(TOPIC_SENSOR_BAT, qos=1)
+            klient.subscribe(TOPIC_VINDUE_STATUS, qos=1)
+            klient.subscribe(TOPIC_FEJLBESKED, qos=1)
+            
+            # Debug og database log
+            print(f"MQTT forbundet til broker: {MQTT_BROKER_HOST}")
+            db.gem_system_log(
+                ENHEDS_ID,
+                'MQTT',
+                f"Forbundet til broker: {MQTT_BROKER_HOST}"
+            )
+        else:
+            # Forbindelse fejlede
+            self.forbundet = False
+            print(f"MQTT forbindelse afvist, kode: {returkode}")
+            db.gem_fejl(
+                ENHEDS_ID,
+                'MQTT',
+                f"Forbindelse afvist, kode: {returkode}"
+            )
+    
+    def _notificer_frontend(self, opdaterings_type: str) -> None:
+        """
+        Sender besked videre til WebSockets asynkront.
+        
+        Denne private hjælpefunktion håndterer den svære del: at planlægge og
+        tilføje en async task i asyncio event loop'en fra en synkonroniseret thread.
+        
+        Args:
+            opdaterings_type: Type af opdatering ('sensor', 'vindue', 'fejl')
+        
+        Implementerings detaljer:
+            1. Hent den kørende asyncio event loop
+            2. Tjek om loop'en stadig kører
+            3. Opret en task i loop'en med vores callback
+        
+        Error Handling:
+            Fejl logges til konsol men crasher ikke vores MQTT tråd.
+            Dette sikrer at en fejl i WebSocket ikke stopper
+            modtagelse af data.
+        
+        Note:
+            Vi logger ikke til database her for at undgå log-spamming
+            ved hver opdatering.
+            Da denne funktion er privat bruges der et "_" - dette 
+            giver besked på, at denne funktion kun skal bruges internt i denne klasse.
+        """
+        if self._websocket_callback:
+            try:
+                import asyncio
+                
+                # Find den kørende event loop
+                loop = asyncio.get_event_loop()
+                
+                # Tjek om loop stadig kører
+                if loop.is_running():
+                    # Tilføj task i loop'en
+                    asyncio.create_task(
+                        self._websocket_callback(opdaterings_type)
+                    )
+            except Exception as fejl:
+                # Debug
+                print(f"WebSocket notify fejl: {fejl}")
+    
+    def on_message(
+        self,
+        klient: mqtt.Client,    # Påtvunget af paho
+        brugerdata: Any,    # Påtvunget af paho
+        besked: mqtt.MQTTMessage
+    ) -> None:
+        """
+        Hjertet i systemet: Modtager, validerer og gemmer data.
+        
+        Denne callback kaldes hver gang vi modtager en MQTT besked.
+        Den håndterer validering, database writes og frontend updates.
+        
+        Args:
+            klient: MQTT client instance (bruges ikke)
+            brugerdata: User-defined data (bruges ikke)
+            besked: MQTT message object med topic og payload
+        
+        Data Flow:
+            1. Parse JSON payload
+            2. Valider værdier baseret på topic/data type
+            3. Opdater intern hukommelse for hurtig frontend adgang
+            4. Gem til lokal database for historik og lagring
+            5. Track batching state
+            6. Send frontend update når batch er klar
+        
+        Error Handling:
+            - JSON decode fejl: Log og skip besked
+            - Validation fejl: Log ugyldig værdi og gem fejl til DB
+            - Database fejl: Fanges i db.gem_(...) funktioner
+            - Andre fejl: Log og fortsæt med næste besked
+        
+        Performance:
+            Køres i MQTT's egen tråd så blokerende operationer
+            (f.eks. database writes) ikke påvirker mulgiheden for at modtage andre beskeder.
+        
+        Note:
+            Alle målinger gemmes både til den interne hukommelse og databasen.
+            Intern hukommelse bruges til live view, database til lagring, historik og grafer.
+        """
         try:
-            # Her er vores besked
-            topic = msg.topic
-            # Her unloader/decoder vi den rå data til en json-string
-            payload_str = msg.payload.decode()
-            #Her tager vi og laver json-stringen om til en python dictionary
+            # Parse besked
+            emne = besked.topic
+            payload_str = besked.payload.decode()
             payload = json.loads(payload_str)
             
-            # Hvis topic stammer fra vores DHT11 fanges det her og værdien tjekkes
-            if topic == TOPIC_SENSOR_TEMP:
-                temp = valider_værdi(payload.get('temperature'), min_val=-40, max_val=85)
-                if temp is not None:
-                    # Den opdaterer så vores data opbevaring i vores sensor_data.py fil
-                    data_opbevaring.update_sensor_data('temperature', temp)
-                    # Og gemmes i database
-                    db.log_sensor('ESP32_UDENFOR', 'temperature', temp)
-                    # Her giver besked til websockets clienterne - altså dem som kigger på vores frontend
-                    if self._websocket_callback:
-                        self._websocket_callback('sensor')
-                else:
-                    #Laves om til db error_logging
-                    db.log_error('MQTT', f"Fejl værdi: {payload.get('temperature')}")
+            # Debug
+            print(f"MQTT modtaget på {emne}: {payload}")
+            
+            # Håndtering af temperatur
+            if emne == TOPIC_SENSOR_TEMP:
+                # Payload forventes: {"temperatur": 22.5}
+                # DHT11 range: 0 til 40°C (Dansk klima kan gå i minusgrader)
+                værdi = valider_værdi(
+                    payload.get('temperatur'),
+                    min_værdi=-25,
+                    max_værdi=40
+                )
                 
-                #Samme som Temperatur - bare med luft fugtighed
-            elif topic == TOPIC_SENSOR_HUM:
-                hum = valider_integer(payload.get('humidity'), min_val=0, max_val=100)
-                if hum is not None:
-                    data_opbevaring.update_sensor_data('humidity', hum)
-                    db.log_sensor('ESP32_UDENFOR', 'humidity', hum)
+                if værdi is not None:
+                    # 1. Opdater intern hukommelse
+                    data_opbevaring.opdater_sensor_data('temperatur', værdi)
                     
-                    if self._websocket_callback:
-                        self._websocket_callback('sensor')
-                else:
-                    db.log_error('MQTT', f"Fejl værdi: {payload.get('humidity')}")
-                
-                # Samme - nu bare batteriprocent
-            elif topic == TOPIC_SENSOR_BAT:
-                bat = valider_integer(payload.get('battery'), min_val=0, max_val=100)
-                if bat is not None:
-                    data_opbevaring.update_sensor_data('battery', bat)
-                    db.log_sensor('ESP32_UDENFOR', 'battery', bat)
+                    # 2. Gem til databse
+                    db.gem_sensor_data(
+                        ESP32_SENSOR_ID,
+                        'DHT11',
+                        'temperatur',
+                        værdi
+                    )
                     
-                    if self._websocket_callback:
-                        self._websocket_callback('sensor')
+                    # 3. Batch tracking
+                    self._sensor_batch['temp'] = True
+                    self._sidste_batch_tid = time.time()
+                    
+                    # Debug
+                    print(f"Temperatur gemt: {værdi}°C")
                 else:
-                    db.log_error('MQTT', f"Fejl værdi: {payload.get('battery')}")
+                    # Ugyldig værdi - log fejl
+                    fejl_besked = f"Ugyldig temperatur: {payload.get('temperatur')}"
+                    db.gem_fejl(ENHEDS_ID, 'MQTT', fejl_besked)
+            
+            # Håndtering af luftfugtighed
+            elif emne == TOPIC_SENSOR_FUGT:
+                # Payload forventes: {"luftfugtighed": 60}
+                # DHT11 range: 20-90% RH (men vi accepterer 0-100%)
+                værdi = valider_heltal(
+                    payload.get('luftfugtighed'),
+                    min_værdi=0,
+                    max_værdi=100
+                )
                 
-                #Her tjekker vi om det er opdatering af vinduets status
-            elif topic == TOPIC_VINDUE_STATUS:
-                status = payload.get('status', '')
-                #Kan kun bestå af 3 tilstande
+                if værdi is not None:
+                    # 1. Opdater intern hukommelse
+                    data_opbevaring.opdater_sensor_data('luftfugtighed', værdi)
+                    
+                    # 2. Gem til database
+                    db.gem_sensor_data(
+                        ESP32_SENSOR_ID,
+                        'DHT11',
+                        'luftfugtighed',
+                        værdi
+                    )
+                    
+                    # 3. Batch tracking
+                    self._sensor_batch['fugt'] = True
+                    self._sidste_batch_tid = time.time()
+                    
+                    # Debug
+                    print(f"Luftfugtighed gemt: {værdi}%")
+                else:
+                    fejl_besked = f"Ugyldig fugtighed: {payload.get('luftfugtighed')}"
+                    db.gem_fejl(ENHEDS_ID, 'MQTT', fejl_besked)
+            
+            # Håndtering af batteri
+            elif emne == TOPIC_SENSOR_BAT:
+                # Payload forventes: {"batteri": 85}
+                # Range: 0-100% (Burde ikke kunne modtage 0, da ESP32 så ville slukke)
+                værdi = valider_heltal(
+                    payload.get('batteri'),
+                    min_værdi=0,
+                    max_værdi=100
+                )
+                
+                if værdi is not None:
+                    # 1. Opdater intern hukommelse
+                    data_opbevaring.opdater_sensor_data('batteri', værdi)
+                    
+                    # 2. Gem til databasen
+                    db.gem_sensor_data(
+                        ESP32_SENSOR_ID,
+                        'Power',
+                        'batteri',
+                        værdi
+                    )
+                    
+                    # 3. Batch tracking
+                    self._sensor_batch['bat'] = True
+                    
+                    # Debug
+                    print(f"Batteri gemt: {værdi}%")
+                    
+                    # 4. Tjek om batch er komplet eller timed out
+                    nu = time.time()
+                    alt_modtaget = all(self._sensor_batch.values())
+                    timeout = (nu - self._sidste_batch_tid > BATCH_TIMEOUT)
+                    
+                    if alt_modtaget or timeout:
+                        # Batch klar - send opdatering til frontend
+                        print("Sensor batch komplet - opdaterer frontend")
+                        self._notificer_frontend('sensor')
+                        
+                        # Nulstil batch state
+                        self._sensor_batch = {k: False for k in self._sensor_batch}
+                        self._sidste_batch_tid = nu
+                else:
+                    fejl_besked = f"Batteri fejl: {payload.get('batteri')}"
+                    db.gem_fejl(ENHEDS_ID, 'MQTT', fejl_besked)
+            
+            # Håndtering af status fra vinduet
+            elif emne == TOPIC_VINDUE_STATUS:
+                # Payload forventes: {
+                #     "status": "aaben",
+                #     "position": 50,
+                #     "max_position": 4096
+                # }
+                status = payload.get('status', 'ukendt')
+                
+                # Valider status string
                 if status in ['aaben', 'lukket', 'ukendt']:
-                    # Skal lige tjekkes med en motor for at præcisere værdierne
-                    position = valider_integer(payload.get('position', 0), min_val=0, max_val=10000)
-                    max_pos = valider_integer(payload.get('max_position', 0), min_val=0, max_val=10000)
+                    # Valider positioner
+                    pos = valider_heltal(
+                        payload.get('position', 0),
+                        min_værdi=0,
+                        max_værdi=4096  # Øvre grænse for motor steps i 28byj-48
+                    )
+                    max_pos = valider_heltal(
+                        payload.get('max_position', 0),
+                        min_værdi=0,
+                        max_værdi=4096
+                    )
                     
-                    #Her oprettes et dictionary som rengør dataen før den sendes videre til vores sensor_data.py fil
-                    ''' 
-                    Vi bruger nogle if/else argumenter på ´en enkelt linje - det hedder ternary operator
-                    Det ville kunne se sådan her ud hvis vi skrev det som et normalt if/else statement:
-                    if position is not None:
-                        result = position
-                    else:
-                        result = 0'''
-                    valideret_status = {
+                    # Opdater intern hukommelse med komplet status
+                    ny_status = {
                         'status': status,
-                        'position': position if position is not None else 0,
+                        'position': pos if pos is not None else 0,
                         'max_position': max_pos if max_pos is not None else 0
                     }
+                    data_opbevaring.opdater_vindue_status(ny_status)
                     
-                    data_opbevaring.update_vindue_status(valideret_status)
-                    db.log_sensor('ESP32_WINDOW', 'window_position', position if position is not None else 0)
-                    # Giver selvfølgelig besked til frontend
-                    if self._websocket_callback:
-                        self._websocket_callback('vindue')
+                    # Gem opdatering til databasen
+                    db.gem_sensor_data(
+                        'esp32_vindue',
+                        'Motor',
+                        'position',
+                        pos if pos is not None else 0
+                    )
+                    
+                    # Debug
+                    print(f"Vindue status opdateret: {status} ({pos}/{max_pos})")
+                    
+                    # Vindues-opdateringer haster mere end sensorer
+                    # Send straks til frontend (uden batching)
+                    self._notificer_frontend('vindue')
                 else:
-                    db.log_error('MQTT', f"Fejl værdi: {status}")
+                    fejl_besked = f"Ugyldig vindue status: {status}"
+                    db.gem_fejl(ENHEDS_ID, 'MQTT', fejl_besked)
+            
+            # Håndtering af fejlbeskeder
+            elif emne == TOPIC_FEJLBESKED:
+                # Payload forventes: {
+                #     "fejl": "DHT11 læsning fejlede",
+                #     "enhed": "esp32_sensor"
+                # }
+                besked_tekst = payload.get('fejl', '')
+                kilde_enhed = payload.get('enhed', 'ukendt_enhed')
                 
-                #Tjekkes efter error fra vores ESP32'er
-            elif topic == TOPIC_ERROR:
-                error_msg = payload.get('error', '')
-                client_id = payload.get('client', 'unknown')
-                
-                if error_msg:
-                    # Opdater error i data_opbevaring
-                    data_opbevaring.update_error({
-                        'error': error_msg,
-                        'client': client_id,
-                        'timestamp': time.time()
+                if besked_tekst:
+                    # Opdater intern hukommelse med fejl information
+                    data_opbevaring.opdater_fejl({
+                        'fejl': besked_tekst,
+                        'kilde': kilde_enhed,
+                        'tid': time.time()
                     })
                     
-                    # Giv besked til frontend
-                    if self._websocket_callback:
-                        self._websocket_callback('error')
-                else:
-                    db.log_error('MQTT', f"Tom fejlbesked fra {client_id}")
-                
-            # Hvis payload_str ikke er gyldig JSON-format
-        except json.JSONDecodeError as e:
-            db.log_error('MQTT', f"JSON decode fejl: {e} | Rå payload: {msg.payload.decode()}")
-            #Andre fejl
-        except Exception as e:
-            db.log_error('MQTT', f"Anden fejl: {e}")
-    
-    # Dette er Når clienten skal oprette forbindelse til brokeren
-    def run(self):
-        forsøg = 0
-        max_forsøg = 5
+                    # Gem fejl til database
+                    # Vi logger fejlen under den enhed der oplevede den
+                    db.gem_fejl(kilde_enhed, 'ESP32', besked_tekst)
+                    
+                    # Debug
+                    print(f"Fejl modtaget fra {kilde_enhed}: {besked_tekst}")
+                    
+                    # Send straks til frontend
+                    self._notificer_frontend('fejl')
         
-        # Max 5 forsøg
-        while self.running and forsøg < max_forsøg:
+        except json.JSONDecodeError as fejl:
+            # Korrupt JSON payload
+            fejl_besked = f"Ugyldig JSON modtaget: {besked.payload}"
+            db.gem_fejl(ENHEDS_ID, 'MQTT', fejl_besked)
+        
+        except Exception as fejl:
+            # Uventet fejl
+            fejl_besked = f"Uventet fejl i message handler: {fejl}"
+            db.gem_fejl(ENHEDS_ID, 'MQTT', fejl_besked)
+    
+    def run(self) -> None:
+        """
+        Hovedløkken for vores MQTT tråd.
+        
+        Sørger for at holde forbindelsen i live og genoprette den hvis den ryger.
+        Kører indtil self.kører sættes til False eller MAX_FORBINDELSES_FORSØG nås.
+        
+        Reconnection strategi:
+            1. Forsøg at forbinde til broker
+            2. Ved fejl: Log fejl og vent GENFORSØGS_DELAY sekunder
+            3. Inkrement forsøgstæller
+            4. Gentag indtil MAX_FORBINDELSES_FORSØG eller success
+            5. Ved success: Nulstil forsøgstæller
+        
+        Monitoring Loop:
+            Efter successfuld forbindelse køres en overvågningsløkke der:
+            - Tjekker self.kører flag hvert 2. sekund
+            - Tillader graceful shutdown via stop() metoden
+        
+        Paho Loop:
+            loop_start() starter Paho's egen baggrundstråd som håndterer:
+            - Netværk I/O
+            - Keepalive pings
+            - Automatisk reconnection
+            - Message callbacks
+        
+        Note:
+            Denne funktion blokerer ikke main program da vi
+            kører som daemon thread.
+        """
+        forsøg = 0
+        
+        # Debug
+        print("MQTT klient thread startet")
+        
+        while self.kører and forsøg < MAX_FORBINDELSES_FORSØG:
             try:
-                # Her er ipv4 og port til brokeren - 60 er en inaktivitets ping der sikrer at forbindelsen holdes.
-                # Der sendes en ping efter 60 sekunder hvis der ikke har været kommunikation for at opretholde forbindelsen.
-                self.client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
-                # start loop
-                self.client.loop_start()
+                # Forsøg at forbinde til broker
+                # debug
+                print(f"Forbinder til MQTT broker: {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
                 
-                # Sættes til 0 når forbindelsen er skabt
+                self.klient.connect(
+                    MQTT_BROKER_HOST,
+                    MQTT_BROKER_PORT,
+                    KEEPALIVE_INTERVAL
+                )
+                
+                # Start Paho's baggrundstråd
+                self.klient.loop_start()
+                
+                # Reset forsøgstæller ved succes
                 forsøg = 0
                 
-                # forsøger hvert 5. sekund
-                while self.running:
-                    if not self.connected:
-                        # Hvis forbindelse blev tabt, prøves der at reconnect
-                        try:
-                            self.client.reconnect()
-                            db.log_event('MQTT', 'Reconnected til MQTT broker')
-                        except:
-                            pass
-                    time.sleep(5)
-                    
-            except ConnectionRefusedError:
-                forsøg += 1
-                time.sleep(5)
+                print("MQTT forbindelse etableret")
                 
-            except Exception as e:
-                forsøg += 1
-                time.sleep(5)
-        
-        if forsøg >= max_forsøg:
-            # Data base log
-            db.log_error('MQTT', f"Kunne ikke forbinde efter {max_forsøg} forsøg")    
-    # Dette er hvad der bruges for at kunne styre mqtt fra vores webserver
-    def publish_command(self, command: str):
-        #Tjekker først om der er forbindelse
-        if not self.connected:
-            #Vi smider en raise så koden ikke kører videre hvis der er fejl her.
-            # Fejlen bliver "raised" til der hvor funktionen blev kaldt
-            raise Exception("Ingen MQTT forbindelse")
-        # Her klargører vi vores payload som skal sendes til vores ESP32
-        try:
-            payload = json.dumps({'command': command})
-            result = self.client.publish(TOPIC_VINDUE_COMMAND, payload)
+                # Overvågningsløkke - kører indtil stop() kaldes
+                while self.kører:
+                    if not self.forbundet:
+                        # Paho prøver selv reconnect
+                        # Vi logger bare status
+                        print("MQTT forbindelse tabt - venter på reconnect")
+                    time.sleep(2)
             
-            # Vi kører dette for ikke at skulle bruge if/else, her tjekker vi kun efter fejl
-            if result.rc != mqtt.MQTT_ERR_SUCCESS:
-                #Smider den tilbage til hvor funktionen blev kaldt
-                raise Exception(f"Kunne ikke sende kommandoen: {result.rc}")
-            # mere til database error logs
-        except Exception as e:
-            db.log_error('MQTT', f"Publish fejl: {e}")
-            raise Exception(f"MQTT publish fejlede: {e}")
+            except Exception as fejl:
+                # Forbindelse fejlede
+                forsøg += 1
+                fejl_besked = f"Kunne ikke forbinde (Forsøg {forsøg}/{MAX_FORBINDELSES_FORSØG}): {fejl}"
+                db.gem_fejl(ENHEDS_ID, 'MQTT', fejl_besked)
+                
+                # Vent før næste forsøg
+                if forsøg < MAX_FORBINDELSES_FORSØG:
+                    print(f"Venter {GENFORSØGS_DELAY}sekunder før næste forsøg")
+                    time.sleep(GENFORSØGS_DELAY)
         
-    # Her slukker vi ned for mqtt clienten og stopper alle forbindelser
-    def stop(self):
-        self.running = False
-        self.client.loop_stop()
-        self.client.disconnect()
-# Vi opretter vores globale instans - hele koden har været opsætning af den her
-mqtt_client = MQTTClient()
+        # Check om vi ramte forsøgsgrænsen
+        if forsøg >= MAX_FORBINDELSES_FORSØG:
+            fejl_besked = f"Giver op efter {MAX_FORBINDELSES_FORSØG} fejlslagne forbindelsesforsøg"
+            db.gem_fejl(ENHEDS_ID, 'MQTT', fejl_besked)
+    
+    def publicer_kommando(self, kommando: str) -> None:
+        """
+        Sender kommando til vores ESP32 ved vinduet.
+        
+        Bruges til at kontrollere vinduet fra frontend via MQTT.
+        Kommandoen sendes til TOPIC_VINDUE_KOMMANDO som vores ESP32 ved vinduet
+        lytter på.
+        
+        Args:
+            kommando: Kommando string
+        
+        Kommandoer:
+            - 'aaben': Åbn vinduet helt
+            - 'luk': Luk vinduet helt
+            - 'kort_aaben': 5 minutters udluftning derefter auto-luk
+            - 'manuel_aaben': Manuel åbning (1/5 af max ad gangen)
+            - 'manuel_luk': Manuel lukning (1/5 af max ad gangen)
+        
+        Error Handling:
+            - Tjekker forbindelse før afsendelse
+            - Logger fejl hvis publish fejler
+            - Returnerer uden at raise exception
+        
+        Payload Format:
+            {"kommando": "aaben"}
+        
+        QoS:
+            QoS 1 = At Least Once. Vi vil være sikre på at motoren
+            modtager kommandoen, dubletter håndteres af motor controller.
+        
+        Note:
+            Kaldes fra WebSocket endpoint når bruger trykker på knap i UI.
+        """
+        # Tjek om vi har forbindelse
+        if not self.forbundet:
+            fejl_besked = "Kan ikke sende kommando: Ingen MQTT forbindelse"
+            db.gem_fejl(ENHEDS_ID, 'MQTT', fejl_besked)
+            return
+        
+        try:
+            # Opbyg JSON payload
+            payload = json.dumps({'kommando': kommando})
+            
+            # Publicer til topic
+            print(f"Sender vindue kommando: {kommando}")
+            info = self.klient.publish(
+                TOPIC_VINDUE_KOMMANDO,
+                payload,
+                qos=1
+            )
+            
+            # Tjek om publish lykkedes
+            # info.rc er returkode (0 = success)
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise Exception(f"Publish fejlkode: {info.rc}")
+            
+            # Log success
+            db.gem_system_log(
+                ENHEDS_ID,
+                'MQTT',
+                f"Kommando sendt: {kommando}"
+            )
+            print(f"Kommando sendt succesfuldt: {kommando}")
+        
+        except Exception as fejl:
+            # Publish fejlede
+            fejl_besked = f"Fejl ved afsendelse af kommando '{kommando}': {fejl}"
+            db.gem_fejl(ENHEDS_ID, 'MQTT', fejl_besked)
+    
+    def stop(self) -> None:
+        """
+        Lukker gracefully og stopper vores tråd.
+        
+        Denne funktion kaldes når programmet lukker ned eller når
+        vi manuelt vil stoppe MQTT klienten.
+        
+        Shutdown Sekvens:
+            1. Sæt self.kører til False (stopper run() loop)
+            2. Stop Paho's baggrundstråd
+            3. Disconnect fra broker
+            4. Log shutdown event
+        
+        Note:
+            Dette er et "blocking call" - den venter på at tråden
+            faktisk stopper. I praksis tager det op til 2 sekunder pga.
+            sleep(2) i vores overvågningsløkke.
+        """
+        # debug
+        print("Stopper MQTT klient")
+        
+        # Stop run() loop
+        self.kører = False
+        
+        # Stop Paho's baggrundstråd
+        self.klient.loop_stop()
+        
+        # Disconnect fra broker
+        self.klient.disconnect()
+        
+        # Log shutdown
+        db.gem_system_log(ENHEDS_ID, 'MQTT', "MQTT klient stoppet")
+        
+        # debug
+        print("MQTT klient stoppet")
+
+
+# Global instans
+
+mqtt_klient: MQTTKlient = MQTTKlient()
+"""
+Global singleton instance af vores MQTT klient.
+Det betyder at alle kører igennem den "samme" instans af denne kode
+Det sikrer thread-safety da klienten, skaber en kø-kultur
+til vores MQTTKlient klasse, så alle kan tilgå den, men kun en af gangen.
+
+Importeres og bruges i main.py:
+    from mqtt_client import mqtt_klient
+    
+    mqtt_klient.start()
+    mqtt_klient.sæt_websocket_callback(broadcast_opdatering)
+    mqtt_klient.publicer_kommando('aaben')
+    mqtt_klient.stop()
+
+Note:
+    Initialiseres ved import men starter ikke før .start() kaldes.
+    Dette tillader konfiguration (callbacks) før thread starter.
+"""
