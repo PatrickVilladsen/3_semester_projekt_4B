@@ -315,8 +315,33 @@ async def hent_historik(
     data = db.hent_datahistorik(data_type, dage)
     return {"data_type": data_type, "data": data}
 
+@app.get("/api/debug/kilder")
+async def debug_sensor_kilder() -> Dict[str, Any]:
+    """Endpoint til debug for at se alle sensor kilder i databasen."""
+    try:
+        # Hent temperatur data fra sidste 7 dage
+        temp_data = db.hent_datahistorik('temperatur', dage=7)
+        
+        # Saml alle unikke kilder
+        kilder = set()
+        for måling in temp_data:
+            kilder.add(måling.get('kilde', 'UKENDT'))
+        
+        return {
+            "antal_målinger": len(temp_data),
+            "unikke_kilder": sorted(list(kilder)),
+            "eksempel_målinger": temp_data[:5] if temp_data else []
+        }
+    
+    except Exception as fejl:
+        return {
+            "fejl": str(fejl),
+            "antal_målinger": 0,
+            "unikke_kilder": [],
+            "eksempel_målinger": []
+        }
 
-@app.get("/api/graph/{graf_type}")
+@app.get("/api/graf/{graf_type}")
 async def hent_graf(
     graf_type: str,
     dage: int = 7
@@ -452,7 +477,20 @@ async def kontroller_vindue(kommando: str) -> Dict[str, str]:
             status_code=400,
             detail=f"Ukendt kommando. Gyldige: {', '.join(TILLADTE_KOMMANDOER)}"
         )
-    
+    # Override ved manuel åben
+    if kommando in ['manuel_aaben', 'manuel_luk']:
+        from climate_controller import klima_controller # Import lokalt for at undgå circular dependency - her vinder funktionalitet over best practice
+        
+        if kommando == 'manuel_aaben':
+            klima_controller.annuller_manuel_override_hvis_manuel_åben(kommando)
+
+        klima_controller.aktiver_manuel_override(kommando)
+        db.gem_system_log(
+                ENHEDS_ID,
+                'WEB_SERVER',
+                f'Manuel override aktiveret (REST): {kommando}'
+            )
+
     # Import lokalt for at undgå circular dependency - her vinder funktionalitet over best practice
     from mqtt import mqtt_klient
     
@@ -494,7 +532,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         -> Returnerer nuværende sensor data
     
     Server -> Client Messages:
-        {'type': 'initial', 'data': {...}, 'thresholds': {...}}
+        {'type': 'initial', 'data': {...}, '': {...}}
         -> Initial state ved forbindelse
         
         {'type': 'update', 'update_type': 'sensor', 'data': {...}}
@@ -541,7 +579,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await websocket.send_text(json.dumps({
             'type': 'initial',
             'data': nuværende_data,
-            'thresholds': GRÆNSER
+            'grænser': GRÆNSER
         }))
         
         # Polling loop state tracking
@@ -568,6 +606,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     if (KOMMANDO_SYNTAX.match(kommando) and
                         kommando in TILLADTE_KOMMANDOER):
                         
+                        if kommando in ['manuel_aaben', 'manuel_luk']:
+                            # Importeres lokalt for at undgå circular dependency
+                            from climate_controller import klima_controller
+
+                            if kommando == 'manuel_aaben':
+                                klima_controller.annuller_manuel_override_hvis_manuel_åben(kommando)
+                            
+                            klima_controller.aktiver_manuel_override(kommando)
+
+                           # Log til database
+                            db.gem_system_log(
+                                ENHEDS_ID,
+                                'WEB_SERVER',
+                                f'Manuel override aktiveret: {kommando}'
+                            )
                         # Send via MQTT (import lokalt)
                         from mqtt import mqtt_klient
                         mqtt_klient.publicer_kommando(kommando)

@@ -196,43 +196,56 @@ class GrafGenerator:
             )
     
     def _organiser_data(
-        self,
-        data: List[Dict[str, Any]]
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """
-        Opdeler data i indoor og outdoor baseret på kilde.
-        
-        Args:
-            data: Liste af sensor målinger med 'kilde' felt
-        
-        Returns:
-            Tuple med (indoor_data, outdoor_data) lister
-        
-        Kilde Matching:
-            Indoor: 'BME680' i kilde string (case-insensitive)
-            Outdoor: 'ESP32' i kilde string (case-insensitive)
-        
-        Eksempler:
-            data = [
-                {'kilde': 'BME680', 'værdi': 22.5},
-                {'kilde': 'ESP32_UDENFOR', 'værdi': 18.2}
-            ]
-            indoor, outdoor = generator._organiser_data(data)
-            len(indoor), len(outdoor)
-            (1, 1)
-        
-        Note:
-            Bruger case-insensitive string matching for robusthed.
-            'bme680', 'BME680', 'Bme680' matcher alle indoor.
-        """
-        indoor_data: List[Dict[str, Any]] = [
-            d for d in data if 'BME680' in d['kilde'].upper()
-        ]
-        outdoor_data: List[Dict[str, Any]] = [
-            d for d in data if 'ESP32' in d['kilde'].upper()
-        ]
-        
-        return indoor_data, outdoor_data
+            self,
+            data: List[Dict[str, Any]]
+        ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+            """
+            Opdeler data i indoor og outdoor baseret på kilde.
+            
+            Args:
+                data: Liste af sensor målinger med 'kilde' felt
+            
+            Returns:
+                Tuple med (indoor_data, outdoor_data) lister
+            
+            Kilde Matching:
+                Indoor: 'BME680' i kilde string (case-insensitive)
+                Outdoor: 'ESP32', 'DHT', 'OUTDOOR', 'UDE' i kilde string
+            
+            Eksempler:
+                data = [
+                    {'kilde': 'BME680', 'værdi': 22.5},
+                    {'kilde': 'ESP32_UDENFOR', 'værdi': 18.2},
+                    {'kilde': 'DHT11', 'værdi': 17.8}
+                ]
+                indoor, outdoor = generator._organiser_data(data)
+                len(indoor), len(outdoor)
+                (1, 2)
+            
+            Note:
+                Bruger case-insensitive string matching for robusthed.
+                Matcher flere mulige outdoor sensor navne for flexibility.
+            """
+            indoor_data: List[Dict[str, Any]] = []
+            outdoor_data: List[Dict[str, Any]] = []
+            
+            # Outdoor sensor identifiers (case-insensitive)
+            outdoor_identifiers = ['ESP32', 'DHT', 'OUTDOOR', 'UDE', 'UDENFOR']
+            
+            for d in data:
+                kilde_upper = d['kilde'].upper()
+                
+                # Tjek om det er indoor sensor
+                if 'BME680' in kilde_upper:
+                    indoor_data.append(d)
+                # Tjek om det er outdoor sensor
+                elif any(identifier in kilde_upper for identifier in outdoor_identifiers):
+                    outdoor_data.append(d)
+                else:
+                    # Log ukendt kilde for debugging
+                    print(f"Ukendt sensor kilde: {d['kilde']}")
+            
+            return indoor_data, outdoor_data
     
     def _konverter_gas_til_kiloohm(
         self,

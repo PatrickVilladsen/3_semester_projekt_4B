@@ -306,12 +306,6 @@ class BME680Sensor(threading.Thread):
             
             # Hvis controlleren anbefaler en handling
             if kommando:
-                # Tjek for manuel override logik (hvis kommandoen er manuel)
-                if kommando in ['manuel_aaben', 'manuel_luk']:
-                    klima_controller.aktiver_manuel_override(kommando)
-                    if kommando == 'manuel_aaben':
-                        klima_controller.annuller_manuel_override_hvis_manuel_åben(kommando)
-                
                 # Send kommandoen via MQTT
                 # debug
                 print(f"Auto-styring: Sender '{kommando}' (Grund: {grund})")

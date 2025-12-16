@@ -90,7 +90,7 @@ BATTERI_ADC_PIN = 34
 BATTERI_MAX_VOLT = 3.842
 """Maximum batteri voltage (Fuld opladt)."""
 
-BATTERI_MAX_ADC = 2240
+BATTERI_MAX_ADC = 2380
 """ADC værdi ved max voltage."""
 
 BATTERI_MIN_VOLT = 3.0
@@ -104,7 +104,7 @@ BATTERI_SHUTDOWN_GRÆNSE = 5
 
 # Konfiguration af vores tidsintervaller
 
-SLEEP_TID = 900
+SLEEP_TID = 900*1000
 """Sekunder mellem sensor målinger (15 minutter)."""
 
 GENFORSØGS_DELAY = 5
@@ -551,23 +551,18 @@ def main():
     # Wake-up sker automatisk efter deepsleep
     # MicroPython runtime kalder main() igen
 
-    # Programseksekvering
-
+"""
+Planlagt execution model:
+    1. Power on / Wake-up -> boot.py køres (system init)
+    2. main.py køres (dette script)
+    3. main() kaldes
+    4. main() kalder deepsleep() -> ESP32 slukker
+    5. RTC timer vækker ESP32 efter SLEEP_TID
+    6. Tilbage til step 1 efter reboot
+"""
 if __name__ == "__main__":
-    """
-    Entry point når script køres.
-    
-    MicroPython execution model:
-        1. Boot - kør boot.py (system initiering)
-        2. Kør main.py (dette script)
-        3. main() kaldes kontinuerligt
-        4. Efter deepsleep wake-up startes der fra step 1 igen
-    
-    Manuel test:
-        import esp32_sensor
-        I: esp32_sensor.læs_batteri()
-        O: 85
-        I: esp32_sensor.læs_dht11_data()
-        O: (22, 65)
-    """
-    main()
+    while True:
+        try:
+            main()
+        except Exception:
+            deepsleep(60*1000)

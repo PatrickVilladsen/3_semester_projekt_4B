@@ -220,7 +220,7 @@ class KlimaController:
         self.fugt_maks: float = GRÆNSER['luftfugtighed']['max']
         
         # Gas (luftkvalitets) grænser fra vores config (Ohm)
-        self.gas_lav: float = GRÆNSER['gas']['grænse']
+        self.gas_lav: float = GRÆNSER['gas']['limit_line']
         self.gas_meget_lav: float = GRÆNSER['gas']['min']
         
         # Udendørs vejr grænser for langvarig udluftning

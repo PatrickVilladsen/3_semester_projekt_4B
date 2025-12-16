@@ -114,7 +114,7 @@ GRÆNSER: Dict[str, Dict[str, Any]] = {
         'max': 75           # % - Grænse for kort_aabning
     },
     'gas': {
-        'grænse': 45000,    # Ohm - Under dette = begyndende dårlig luftkvalitet
+        'limit_line': 45000,    # Ohm - Under dette = begyndende dårlig luftkvalitet
         'min': 25000        # Ohm - Under dette = meget dårlig luftkvalitet
     }
 }
