@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<!--
+    Automatisk Udluftningssystem - Frontend
+    
+    Dette HTML dokument implementerer brugergrænsefladen til vores IoT-baseret
+    automatiske vinduesstyring med real-time klima monitoring.
+    
+    Target Hardware:
+        5" Touchscreen Display (800x480 opløsning)
+        Raspberry Pi 5 (lokal server)
+        
+    Arkitektur:
+        Static HTML betjent af FastAPI
+        WebSocket forbindelse til backend for real-time data
+        JavaScript håndterer UI opdateringer og interaktioner
+        
+    Data Kilder:
+        - ESP32 og DHT11: Udendørs temperatur, fugtighed, batteri
+        - BME680: Indendørs temperatur, fugtighed, gas (luftkvalitet)
+        - ESP32 med steppermotor: Vindues position og status
+        
+    Nøgle Features:
+        - Real-time sensordata-oplysningsdisplay med farve-kodning
+        - Press 'N' hold funktionelt vindueskontrol (kort/langt tryk)
+        - Auto-roterende grafer (temperatur, luftfugtighed, gas)
+        - Toast notifikationer for bruger feedback og notifikationer
+        - Ekstra support med Semnatic HTML og ARIA labels
+-->
+<html lang="da">
+<head>
+    <!-- 
+        Meta Information
+        
+        charset UTF-8: Support for danske tegn (æ, ø, å)
+        viewport: Faste dimensioner matcher vores hardware specs (800x480)
+        user-scalable=no: Deaktiverer zoom på touchscreen
+    -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=800, height=480, initial-scale=1.0, user-scalable=no">
+    <meta name="description" content="Automatisk vindues-styringssystem med klima monitoring">
+    <meta name="author" content="Gruppe 4B">
+    
+    <!-- Side Titel - Vises i browser tab -->
+    <title>Automatisk Udluftningssystem</title>
+    
+    <!-- Favicon - det lille icon i browser tab -->
+    <link rel="icon" type="image/png" href="/static/images/favicon.png">
+    
+    <!-- Stylesheet - styling af vores interface - venter på CSS er klar før der "renders" -->
+    <link rel="stylesheet" href="/static/style.css">
+    
+    <!-- 
+        Preload af vores billeder
+        
+        Reducerer First Contentful Paint (FCP) ved at fetche
+        vores billeder parallelt med HTML parsing.
+
+        Ulempe:
+            Bruger ekstra båndbredde til assets der muligvis ikke vises
+            men det har ingen betydning da vi benytter alle
+    -->
+    <link rel="preload" href="/static/images/closed.png" as="image">
+    <link rel="preload" href="/static/images/termometer.png" as="image">
+    <link rel="preload" href="/static/images/fugt.png" as="image">
+    <link rel="preload" href="/static/images/batteri.png" as="image">
+</head>
+
+<body>
+    <!-- 
+        TOP BAR - Primær Kontrol og Status
+
+        Indeholder:
+            - Udendørs data-display (DHT11 data)
+            - Vindues kontrol knapper (åben/luk)
+            - Vindues status display med animation
+            - Ur display
+            
+        Layout:
+            Flexbox med space-between distribution
+            Alle felter centreret vertikalt (align-items: center)
+    -->
+    <header class="top-bar" role="banner">
+        <!-- 
+            Udendørs Data-Display
+            
+            Viser real-time data fra ESP32 udendørs sensor.
+            
+            Data Flow:
+                ESP32 (MQTT publish) -> Mosquitto broker -> RPi5 MQTT client
+                -> Data opbevaring -> WebSocket -> Frontend update
+                
+            Opdaterings Frekvens:
+                ESP32 sender hver 15. minut
+                Frontend opdateres øjeblikkeligt ved modtagelse
+                
+            Sensorer:
+                DHT11: Temperatur og luftfugtighed´
+                ADC: Batteri niveau via spændingsdeler
+                
+            Visuelt Design:
+                Blå himmel gradient
+                Tre kolonner med ikoner og værdier
+        -->
+        <section class="udendoers-boks" aria-label="Udendørs vejrdata">
+            <h3>Udendørs</h3>
+            <!--Temperatur-->
+            <div class="udendoers-kolonner">
+                <div class="udendoers-kolonne">
+                    <img 
+                        src="/static/images/termometer.png" 
+                        alt="Temperatur ikon" 
+                        class="ikon-medium"
+                        loading="lazy"
+                    >
+                    <span 
+                        class="udendoers-vaerdi" 
+                        id="outdoorTemp"
+                        aria-label="Udendørs temperatur"
+                    >-- °C</span>
+                </div>
+                <!--Luftfugtighed-->
+                <div class="udendoers-kolonne">
+                    <img 
+                        src="/static/images/fugt.png" 
+                        alt="Fugtigheds ikon" 
+                        class="ikon-medium"
+                        loading="lazy"
+                    >
+                    <span 
+                        class="udendoers-vaerdi" 
+                        id="outdoorFugt"
+                        aria-label="Udendørs luftfugtighed"
+                    >-- %</span>
+                </div>
+                <!--Batteri-->
+                <div class="udendoers-kolonne">
+                    <img 
+                        src="/static/images/batteri.png" 
+                        alt="Batteri ikon" 
+                        class="ikon-medium"
+                        loading="lazy"
+                    >
+                    <span 
+                        class="udendoers-vaerdi" 
+                        id="outdoorBat"
+                        aria-label="Sensor batteri niveau"
+                    >-- %</span>
+                </div>
+            </div>
+        </section>
+        
+        <!-- 
+            Vindues Kontrol - Åben Knap
+            
+            Press & Hold Funktionalitet:
+            
+                Kort Tryk (<1000ms):
+                    - Sender "manuel_aaben" kommando
+                    - Åbner vindue i 1/5 inkrementer
+                    - Aktiverer manuel override
+                    - Use case: User vil have delvis åbning
+                    
+                Langt Tryk (≥1000ms):
+                    - Sender "aaben" kommando
+                    - Fuld åbning til max position
+                    - Climate controller genoptages efter åbning
+                    - Use case: User vil have fuld åbning
+                    
+            Implementation:
+                JavaScript event handlers:
+                - mousedown/touchstart: Start timer
+                - mouseup/touchend: Check varighed og send kommando
+                - mouseleave/touchcancel: Fortryd timer
+                
+            Visuelt Feedback:
+                - Grøn gradient baggrund
+                - Hvidt ikon med forestilling af et åbent vindue
+                - Toast notifikation ved afsendelse af kommando
+        -->
+        <button 
+            class="vindue-knap knap-aaben"
+            id="åbenKnap"
+            aria-label="Åben vindue - Kort tryk for gradvist, langt tryk for fuldt"
+            type="button"
+        >
+            <img 
+                src="/static/images/open.png" 
+                alt="" 
+                class="knap-ikon"
+                aria-hidden="true"
+                loading="lazy"
+            >
+            <span>ÅBEN</span>
+        </button>
+        
+        <!-- 
+            Vindues Status Display
+            
+            Viser nuværende vindues status med animeret visuelt feedback.
+            
+            Status States:
+                "aaben": Vindue er fuldt åbent
+                "lukket": Vindue er fuldt lukket
+                "ukendt": Status ikke tilgængelig
+                
+            Visuelle Elementer:
+                1. Animeret Kant:
+                   - Grøn gradient når åben
+                   - Rød gradient når lukket
+                   - Farve overgang via CSS
+                   
+                2. Status Cirkel:
+                   - Indeholder status ikon (open.png / closed.png)
+                   - Glow-effekt matcher kant farve
+                   - Skygge for dybde
+                   
+                3. Status Tekst:
+                   - Label: "Vindue"
+                   - Værdi: "ÅBEN" / "LUKKET"
+                   
+            Animation:
+                CSS transitions på:
+                - Kantfarve
+                - Cirkelbaggrund
+                - Box shadow-glow
+                
+            Tilgængelighed:
+                aria-live="polite": Screenreader-annoncering ved ændring
+                aria-label: Opdateres med status for kontekst
+                role="status": Semantisk rolle for status display
+                
+            Data Kilde:
+                ESP32-Controller via MQTT
+                Opdatering ved hver motor bevægelse
+        -->
+        <section 
+            class="vinduesstatus lukket" 
+            id="vinduesStatus"
+            aria-label="Vindues status"
+            role="status"
+            aria-live="polite"
+        >
+            <div class="status-cirkel" aria-hidden="true">
+                <img 
+                    src="/static/images/closed.png" 
+                    alt="" 
+                    class="status-ikon" 
+                    id="statusIkon"
+                    loading="eager"
+                >
+            </div>
+            <div class="status-tekst">
+                <div class="status-label">Vindue</div>
+                <div 
+                    class="status-vaerdi" 
+                    id="statusVærdi"
+                    aria-label="Vindue er lukket"
+                >LUKKET</div>
+            </div>
+        </section>
+        
+        <!-- 
+            Vindues Kontrol - Luk Knap
+            
+            Press & Hold Funktionalitet:
+            
+                Kort Tryk (<1000ms):
+                    - Sender "manuel_luk" kommando
+                    - Lukker vindue i 1/5 inkrementer
+                    - Aktiverer manuel override
+                    - Use case: User vil lukke vinduet gradvist
+                    
+                Langt Tryk (≥1000ms):
+                    - Sender "luk" kommando
+                    - Fuld automatisk lukning til position 0
+                    - Climate controller genoptages
+                    - Use case: User vil lukke helt
+                    
+            Visuelt Feedback:
+                - Rød gradient baggrund
+                - Hvidt ikon der forestiller et lukket vindue
+                - Toast notifikation ved afsendelse af kommando
+        -->
+        <button 
+            class="vindue-knap knap-luk"
+            id="lukKnap"
+            aria-label="Luk vindue - Kort tryk for manuel, langt tryk for automatisk"
+            type="button"
+        >
+            <img 
+                src="/static/images/closed.png" 
+                alt="" 
+                class="knap-ikon"
+                aria-hidden="true"
+                loading="lazy"
+            >
+            <span>LUK</span>
+        </button>
+        
+        <!-- 
+            Ur Display
+            
+            Viser aktuel tid og dato i dansk format.
+            
+            Format:
+                Tid: HH:MM (24-timers format)
+                Dato: DD/MM (dag og måned)
+                
+            Opdatering:
+                JavaScript setInterval opdaterer hvert 1. sekund
+                Bruger Date.toLocaleTimeString() med da-DK locale
+                
+            Tidszone:
+                Europe/Copenhagen hardcoded
+                Matcher server tidszone (RPi5 konfiguration)
+                
+            Tilgængelighed:
+                <time> element med datetime attribut
+                Maskinlæsbart format: ISO 8601
+                Menneskelæsbart display: Dansk format
+                
+            Visuelt Design:
+                Mørk gradient baggrund
+                Stor skrift til tid med monospace font
+                Mindre skrift til dato
+        -->
+        <aside class="ur-boks" aria-label="Ur">
+            <time 
+                class="ur-tid" 
+                id="klokken"
+                datetime=""
+                aria-label="Aktuel tid"
+            >--:--</time>
+            <div 
+                class="ur-dato" 
+                id="dato"
+                aria-label="Dags dato"
+            >--</div>
+        </aside>
+    </header>
+    
+    <!-- 
+        Main indhold - Data Display og Grafer
+        
+        Layout:
+            Flexbox med to kolonner:
+            1. Indendørs data kolonne (200px fast bredde, venstre)
+            2. Graf sektion (flex-grow, fylder resten)
+            
+        Højde Beregning:
+            (480px - 110px) = 370px
+            Total højde (480px) minus top bar (110px)
+    -->
+    <main class="hoved-indhold" role="main">
+        <!-- 
+            Indendørs Sensor Data Kolonne
+            
+            Viser real-time BME680 sensor data med farve-kodning.
+            
+            Sensor: Bosch BME680
+                
+            Data Flow:
+                BME680 (I2C) -> Python thread
+                -> Data opbevaring -> WebSocket -> Frontend
+                
+            Farve Kodnings System:
+            
+                Temperatur & Luftfugtighed:
+                    Grøn (normal):
+                        Inden for optimal komfort range
+                        Temperatur: 19-22°C
+                        Fugtighed: 40-60%
+                        
+                    Gul (too_high eller too_low):
+                        Over eller under optimal
+                        Advarsel til User
+                        System vil åbne vindue hvis 
+                        logikken passer til det
+                        
+                    Rød (max):
+                        Bruges ved for høje værdier
+                        Øjeblikkelig handling nødvendig
+                        Vindue åbnes automatisk
+                        
+                Gas (omvendt logik - højere modstand = bedre luft):
+                    Grøn (normal):
+                        >50 kΩ = god luftkvalitet (skal testes yderligere for klar skala)
+                        
+                    Gul (limit_line):
+                        25-45 kΩ = Dårlig luftkvalitet
+                        System vil udlufte
+                        
+                    Rød (min):
+                        <25 kΩ = Meget dårlig luftkvalitet
+                        Vindue åbnes straks
+                        
+            Display Format:
+                Temperatur: "22°C" (heltal)
+                Fugtighed: "55%" (heltal)
+                Gas: "48kΩ" (heltal, divideret med 1000)
+                
+            Visuelt Design:
+                Mørk gradient baggrund
+                Store tal i monospace font (bedre læsbarhed da alt får samme størrelse)
+                Enhed i mindre grå tekst
+                Bløde farveovergange
+        -->
+        <aside class="data-kolonne" aria-label="Indendørs sensordata">
+            <!-- 
+                Indendørs Temperatur
+                
+                BME680 temperatur sensor.
+                JavaScript opdaterer værdi og farve klasse baseret på grænseværdierne.
+            -->
+            <article class="indendoers-aflæsning">
+                <h4 class="indendoers-label">Temperatur</h4>
+                <div>
+                    <span 
+                        class="indoor-value normal" 
+                        id="indoorTemp"
+                        aria-label="Indendørs temperatur"
+                    >--</span>
+                    <span class="indendoers-enhed" aria-hidden="true">°C</span>
+                </div>
+            </article>
+            
+            <!-- 
+                Indendørs Luftfugtighed
+                
+                BME680 luftfugtigheds sensor.
+                Vigtigt for komfort og forhindring af skimmelsvamp.
+            -->
+            <article class="indendoers-aflæsning">
+                <h4 class="indendoers-label">Fugtighed</h4>
+                <div>
+                    <span 
+                        class="indoor-value normal" 
+                        id="indoorFugt"
+                        aria-label="Indendørs luftfugtighed"
+                    >--</span>
+                    <span class="indendoers-enhed" aria-hidden="true">%</span>
+                </div>
+            </article>
+            
+            <!-- 
+                Indendørs Gas (Luftkvalitet)
+                
+                BME680 VOC gas sensor.
+                Måler volatile organic compounds (luftkvalitets-indikator).
+                
+                Højere modstand = Bedre luftkvalitet
+                
+                Display:
+                    Rå værdi divideres med 1000 for læsbarhed
+                    50000 Ohm -Z "50 kΩ"
+            -->
+            <article class="indendoers-aflæsning">
+                <h4 class="indendoers-label">Gas</h4>
+                <div>
+                    <span 
+                        class="indoor-value normal" 
+                        id="indoorGas"
+                        aria-label="Luftkvalitet gas niveau"
+                    >--</span>
+                    <span class="indendoers-enhed" aria-hidden="true">kΩ</span>
+                </div>
+            </article>
+        </aside>
+        
+        <!-- 
+            Graf Display-Sektion
+            
+            Viser matplotlib grafer genereret i backend.
+            
+            Graf Typer:
+                1. Temperatur: Indendørs (BME680) vs Udendørs (DHT11)
+                2. Luftfugtighed: Indendørs vs Udendørs
+                3. Gas: Kun indendørs
+                
+            Rotations System:
+                JavaScript roterer mellem graf typer hvert 15. sekund
+                Rotation giver overblik
+                
+            Graf Features:
+                - 7 dages historik (default)
+                - Mørkt tema med fremtrædende farver
+                - Dansk dato formatering (DD/MM)
+                - Dual-axis for indendørs/udendørs sammenligning
+                - Legend med data kilde labels
+                
+            Backend Generering:
+                Endpoint: GET /api/graf/{type}?days=7&t={timestamp}
+                
+                Flow:
+                    1. JavaScript request med timestamp
+                    2. FastAPI endpoint henter data fra database
+                    3. Matplotlib genererer PNG til BytesIO buffer
+                    4. StreamingResponse sender PNG til browser
+                    
+            Loading State:
+                CSS loading animation mens graf genereres
+                Smooth fade-in animation ved hver load
+                
+            Tilgængelighed:
+                role="img": Semantisk rolle for graf
+                alt tekst: Beskriver graf type og data
+                noscript fallback: Besked hvis JS er disabled
+        -->
+        <section 
+            class="graf-sektion" 
+            aria-label="Data Historik-graf"
+            role="img"
+        >
+            <img 
+                id="grafPNG" 
+                src="" 
+                alt="Graf der viser sensorenes data-historik" 
+                class="graf-billede"
+                loading="lazy"
+            >
+            <!-- Fallback ved intet JavaScript -->
+            <noscript>
+                <p style="color: white; text-align: center;">
+                    JavaScript er påkrævet for at vise grafer.
+                </p>
+            </noscript>
+        </section>
+    </main>
+    
+    <!-- 
+        TOAST NOTIFIKATIONS SYSTEM
+        
+        Pop-up notifikation i bunden af skærmen.
+        Bruges til bruger feedback og system events.
+        
+        Toast Typer:
+            fejl (rød):
+                - Fejlbeskeder
+                - Forbindelses fejl
+                - Ugyldige kommandoer
+                
+            success (grøn):
+                - Kommandoer sendt succesfuldt
+                - Forbindelse etableret
+                - Bekræftelser
+                
+            advarsel (gul):
+                - Forbindelse tabt (genforbinder)
+                - Midlertidige problemer
+                
+            info (blå):
+                - Informations beskeder
+                - Kommando ekko ("Manuel åbning (1/5)")
+                - Status opdateringer
+                
+        Opførsel:
+            - Slider ind fra bunden
+            - Auto-dismisses efter et angivet tidspunkt
+            - Flere toasts ikke kø-dannelse
+            
+        Tilgængelighed:
+            role="alert": Screen-reader annoncering ved visning
+            aria-live="assertive": Høj prioritet (afbryder nuværende tale)
+            aria-atomic="true": Læs hele besked
+            
+        Implementation:
+            JavaScript showToast(besked, type, varighed) funktion
+            CSS .toast.show klasse trigger via classList.add()
+            setTimeout for auto-dismiss via classList.remove()
+            
+        Visuelt Design:
+            Emoji ikon for hurtig type genkendelse
+            Afrundede hjørner
+            Centreret horisontalt med transform
+    -->
+    <aside 
+        class="toast" 
+        id="toast"
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+    >
+        <span 
+            class="toast-ikon" 
+            id="toastIkon"
+            aria-hidden="true"
+        >⚠️</span>
+        <span 
+            class="toast-besked" 
+            id="toastBesked"
+        >Besked</span>
+    </aside>
+    
+    <!-- 
+        JAVASCRIPT
+        
+        Client-side logik for interface funktionalitet.
+        
+        Script Loading:
+            defer attribut:
+                - Non-blocking download (parallelt med HTML og billedernes parsing)
+                - Udfør efter DOM klargørelse (før DOMContentLoaded event)
+                - Bevarer rækkefølge for scripts
+                
+                Note:
+                    - Bruges i stedet for async da vi opnår rækkefølge og at DOM klargøres med defer
+                
+        Script Features:
+            WebSocket Håndtering:
+                - Connect/reconnect logik
+                - Beskeds-parsing og routing
+                - Fejl håndtering og recovery
+                
+            DOM Opdateringer:
+                - Real-time sensor data-display
+                - Farve-kodning baseret på grænseværdier
+                - Vinduesstatus animation
+                - Ur opdatering (1 sek interval)
+                
+            Bruger Interaktioner:
+                - Press & hold detection
+                - Touch og mouse event håndtering
+                - Kommando afsendelse med WebSocket
+                
+            Graf System:
+                - Auto-rotation mellem graf typer
+                - Cache-busted URL generering
+                - Loading-state håndtering
+                
+            Toast Notifikationer:
+                - Vis/skjul animation
+                - Auto-dismiss timer
+                - Type-baseret styling
+    -->
+    <script src="/static/script.js" defer></script>
+    
+    <!-- 
+        JavaScript Fallback - Ingen-Script Advarsel
+        
+        Vises hvis browser ikke har JavaScript aktiveret.
+        
+        Use Cases:
+            - Der kan være skærpet sikkerhedspolitikker på udvalgte lokationer
+            - Privacy-fokuserede Users med NoScript extension
+            
+        Design:
+            Fixed overlay med brug af z-index
+            Centreret både vertikalt og horisontalt
+            Styling der signalerer advarsel (rød baggrund)
+            Klar instruktion til at aktivere JavaScript
+            
+        Rationale:
+            Interface er 100% afhængig af JavaScript:
+            - WebSocket kommunikation
+            - DOM manipulation
+            - Event håndtering
+    -->
+    <noscript>
+        <div style="
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(244, 67, 54, 0.95);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            max-width: 400px;
+            z-index: 9999;
+        ">
+            <h2 style="margin-bottom: 15px;">JavaScript Påkrævet</h2>
+            <p>Dette interface kræver JavaScript for at fungere.</p>
+            <p style="margin-top: 10px; font-size: 14px; opacity: 0.9;">
+                Aktiver venligst JavaScript i din browser.
+            </p>
+        </div>
+    </noscript>
+</body>
+</html>

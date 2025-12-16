@@ -1,0 +1,15 @@
+Skrives efter rapporten vil som minimum indeholder information omkring:
+Setter
+Naming Conventions - interne flags
+Threading
+MQTT
+SQL
+Metode vs. funktion
+contextmanager
+SQl injection defense med VALUES (?, ?, ?)
+Logging rangorden
+ASGI
+uvicorn
+fastapi
+websocket
+etc.
