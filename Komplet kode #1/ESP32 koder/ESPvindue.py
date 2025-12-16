@@ -73,22 +73,22 @@ WIFI_TIMEOUT = 20
 
 # Konfiguration af hardware pins
 
-STEPPER_PIN1 = #
+STEPPER_PIN1 = 16
 """GPIO pin til stepper motor coil 1 (via ULN2003)."""
 
-STEPPER_PIN2 = #
+STEPPER_PIN2 = 17
 """GPIO pin til stepper motor coil 2 (via ULN2003)."""
 
-STEPPER_PIN3 = #
+STEPPER_PIN3 = 5
 """GPIO pin til stepper motor coil 3 (via ULN2003)."""
 
-STEPPER_PIN4 = #
+STEPPER_PIN4 = 18
 """GPIO pin til stepper motor coil 4 (via ULN2003)."""
 
-SOLENOID_PIN = #
+SOLENOID_PIN = 22
 """GPIO pin til MOSFET der styrer solenoiden."""
 
-BUZZER_PIN = #
+BUZZER_PIN = 23
 """GPIO pin til buzzer"""
 
 
