@@ -190,7 +190,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # REST API Endpoints
 
 @app.get("/")
-async def rod() -> FileResponse:
+async def root() -> FileResponse:
     """
     Serverer HTML frontend fra static directory.
     
