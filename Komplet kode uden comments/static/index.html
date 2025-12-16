@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=800, height=480, initial-scale=1.0, user-scalable=no">
+    <meta name="description" content="Automatisk vindues-styringssystem med klima monitoring">
+    <meta name="author" content="Gruppe 4B">
+    <title>Automatisk Udluftningssystem</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png">
+        <link rel="stylesheet" href="/static/style.css">
+    <link rel="preload" href="/static/images/closed.png" as="image">
+    <link rel="preload" href="/static/images/termometer.png" as="image">
+    <link rel="preload" href="/static/images/fugt.png" as="image">
+    <link rel="preload" href="/static/images/batteri.png" as="image">
+</head>
+
+<body>
+    <header class="top-bar" role="banner">
+        <section class="udendoers-boks" aria-label="Udendørs vejrdata">
+            <h3>Udendørs</h3>
+            <div class="udendoers-kolonner">
+                <div class="udendoers-kolonne">
+                    <img 
+                        src="/static/images/termometer.png" 
+                        alt="Temperatur ikon" 
+                        class="ikon-medium"
+                        loading="lazy"
+                    >
+                    <span 
+                        class="udendoers-vaerdi" 
+                        id="outdoorTemp"
+                        aria-label="Udendørs temperatur"
+                    >-- °C</span>
+                </div>
+                <div class="udendoers-kolonne">
+                    <img 
+                        src="/static/images/fugt.png" 
+                        alt="Fugtigheds ikon" 
+                        class="ikon-medium"
+                        loading="lazy"
+                    >
+                    <span 
+                        class="udendoers-vaerdi" 
+                        id="outdoorFugt"
+                        aria-label="Udendørs luftfugtighed"
+                    >-- %</span>
+                </div>
+                <div class="udendoers-kolonne">
+                    <img 
+                        src="/static/images/batteri.png" 
+                        alt="Batteri ikon" 
+                        class="ikon-medium"
+                        loading="lazy"
+                    >
+                    <span 
+                        class="udendoers-vaerdi" 
+                        id="outdoorBat"
+                        aria-label="Sensor batteri niveau"
+                    >-- %</span>
+                </div>
+            </div>
+        </section>
+
+        <button 
+            class="vindue-knap knap-aaben"
+            id="åbenKnap"
+            aria-label="Åben vindue - Kort tryk for gradvist, langt tryk for fuldt"
+            type="button"
+        >
+            <img 
+                src="/static/images/open.png" 
+                alt="" 
+                class="knap-ikon"
+                aria-hidden="true"
+                loading="lazy"
+            >
+            <span>ÅBEN</span>
+        </button>
+       
+        <section 
+            class="vinduesstatus lukket" 
+            id="vinduesStatus"
+            aria-label="Vindues status"
+            role="status"
+            aria-live="polite"
+        >
+            <div class="status-cirkel" aria-hidden="true">
+                <img 
+                    src="/static/images/closed.png" 
+                    alt="" 
+                    class="status-ikon" 
+                    id="statusIkon"
+                    loading="eager"
+                >
+            </div>
+            <div class="status-tekst">
+                <div class="status-label">Vindue</div>
+                <div 
+                    class="status-vaerdi" 
+                    id="statusVærdi"
+                    aria-label="Vindue er lukket"
+                >LUKKET</div>
+            </div>
+        </section>
+        
+        <button 
+            class="vindue-knap knap-luk"
+            id="lukKnap"
+            aria-label="Luk vindue - Kort tryk for manuel, langt tryk for automatisk"
+            type="button"
+        >
+            <img 
+                src="/static/images/closed.png" 
+                alt="" 
+                class="knap-ikon"
+                aria-hidden="true"
+                loading="lazy"
+            >
+            <span>LUK</span>
+        </button>
+       
+        <aside class="ur-boks" aria-label="Ur">
+            <time 
+                class="ur-tid" 
+                id="klokken"
+                datetime=""
+                aria-label="Aktuel tid"
+            >--:--</time>
+            <div 
+                class="ur-dato" 
+                id="dato"
+                aria-label="Dags dato"
+            >--</div>
+        </aside>
+    </header>
+    
+    <main class="hoved-indhold" role="main">
+        
+        <aside class="data-kolonne" aria-label="Indendørs sensordata">
+           
+            <article class="indendoers-aflæsning">
+                <h4 class="indendoers-label">Temperatur</h4>
+                <div>
+                    <span 
+                        class="indoor-value normal" 
+                        id="indoorTemp"
+                        aria-label="Indendørs temperatur"
+                    >--</span>
+                    <span class="indendoers-enhed" aria-hidden="true">°C</span>
+                </div>
+            </article>
+            
+            <article class="indendoers-aflæsning">
+                <h4 class="indendoers-label">Fugtighed</h4>
+                <div>
+                    <span 
+                        class="indoor-value normal" 
+                        id="indoorFugt"
+                        aria-label="Indendørs luftfugtighed"
+                    >--</span>
+                    <span class="indendoers-enhed" aria-hidden="true">%</span>
+                </div>
+            </article>
+            
+            <article class="indendoers-aflæsning">
+                <h4 class="indendoers-label">Gas</h4>
+                <div>
+                    <span 
+                        class="indoor-value normal" 
+                        id="indoorGas"
+                        aria-label="Luftkvalitet gas niveau"
+                    >--</span>
+                    <span class="indendoers-enhed" aria-hidden="true">kΩ</span>
+                </div>
+            </article>
+        </aside>
+        
+        <section 
+            class="graf-sektion" 
+            aria-label="Data Historik-graf"
+            role="img"
+        >
+            <img 
+                id="grafPNG" 
+                src="" 
+                alt="Graf der viser sensorenes data-historik" 
+                class="graf-billede"
+                loading="lazy"
+            >
+            <noscript>
+                <p style="color: white; text-align: center;">
+                    JavaScript er påkrævet for at vise grafer.
+                </p>
+            </noscript>
+        </section>
+    </main>
+    
+    <aside 
+        class="toast" 
+        id="toast"
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+    >
+        <span 
+            class="toast-ikon" 
+            id="toastIkon"
+            aria-hidden="true"
+        >⚠️</span>
+        <span 
+            class="toast-besked" 
+            id="toastBesked"
+        >Besked</span>
+    </aside>
+   
+    <script src="/static/script.js" defer></script>
+    
+    <noscript>
+        <div style="
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(244, 67, 54, 0.95);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            max-width: 400px;
+            z-index: 9999;
+        ">
+            <h2 style="margin-bottom: 15px;">JavaScript Påkrævet</h2>
+            <p>Dette interface kræver JavaScript for at fungere.</p>
+            <p style="margin-top: 10px; font-size: 14px; opacity: 0.9;">
+                Aktiver venligst JavaScript i din browser.
+            </p>
+        </div>
+    </noscript>
+</body>
+</html>

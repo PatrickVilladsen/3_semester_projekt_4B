@@ -1,0 +1,525 @@
+/*
+    Dette er vores CSS stylesheet
+
+    Her håndterer vi designet gennem tre hovedkategorier:
+
+    1. Placering (Layout)
+       Vi styrer positioneringen af elementer, tekst og bokse.
+       Nøgleord:
+         - display (flex)
+         - align-items & justify-content
+         - gap
+         - margin & padding
+
+    2. Farve (Visuelt Tema)
+       Vi definerer farvepaletten for tekst, baggrunde og feedback.
+       Nøgleord:
+         - color
+         - background (linear-gradient)
+         - box-shadow & text-shadow
+
+    3. Form (Udseende)
+       Vi definerer elementernes fysiske fremtoning og dimensioner.
+       Nøgleord:
+         - box-sizing
+         - width & height
+         - border-radius (afrundede hjørner)
+         - font-smoothing (skrifttype rendering)
+         - font-size
+*/
+
+/* En global style reset - klargøre vores stylesheet for at undgå brower-påvirkning */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Styling af vores grundlag - altså det bagerste lag */
+body {
+    font-family: 'Piboto', sans-serif; /*linux standard*/
+    background: #000;
+    color: #fff;
+    width: 800px;
+    height: 480px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale; /*Giver pænere hvid tekst*/
+}
+
+/* Opæstter kassen til vores top-bar, så vi kan indsætte vores mindre kasser ind i den */
+.top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 110px;
+    padding: 10px;
+    gap: 10px;
+    background: #000;
+}
+
+/* Vores første container med DHT11 data */
+.udendoers-boks {
+    background: linear-gradient(135deg, #3992fe 0%, #006cab 100%);
+    border-radius: 10px;
+    padding: 8px 15px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 90px;
+    flex-shrink: 0;
+}
+
+/* Felt til vores header inde i udendørs boksen */
+.udendoers-boks h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+    margin-bottom: 1px;
+}
+/* flex-container der holder styr på 3 kolonner */
+.udendoers-kolonner {
+    display: flex;
+    gap: 15px;
+}
+/* design af hver kolonne */
+.udendoers-kolonne {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+/* Ikonerne som skal være inde i kolonnerne */
+.ikon-medium {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+    background: #fff;
+    border-radius: 5px;
+    padding: 3px;
+}
+/* tekst felterne der skal være under ikonerne */
+.udendoers-vaerdi {
+    font-weight: 700;
+    font-size: 15px;
+    color: rgba(255, 255, 255, 0.95);
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* oprettelse af container til vores 2 knapper der skal bruges til User-control af vinduet */
+.vindue-knap {
+    width: 110px;
+    height: 90px;
+    border: none;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* gør at containeren bliver lidt mindre når der trykkes på den */
+.vindue-knap:active {
+    transform: scale(0.95);
+}
+
+/* design af "ring" der kommer når man benytter TAB til at skifte mellem knapper */
+.vindue-knap:focus-visible {
+    outline: 3px solid rgba(255, 255, 255, 0.5);
+    outline-offset: 2px;
+}
+
+/* Bagrunden der skal bruges i containeren når det er åben-knappen */
+.knap-aaben {
+    background: linear-gradient(135deg, #279001 0%, #21ff2c 100%);
+}
+
+/* Bagrunden der skal bruges i containeren når det er luk-knappen */
+.knap-luk {
+    background: linear-gradient(135deg, #ff0000 0%, #8b0000 100%);
+}
+/* container til vores ikoner til knapperne */
+.knap-ikon {
+    width: 35px;
+    height: 35px;
+    object-fit: contain;
+    filter: brightness(0) invert(1);
+}
+/* Midterkassen i top-baren - den store grå */
+.vinduesstatus {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    justify-content: center;
+    background: linear-gradient(135deg, rgba(30, 30, 30, 0.95) 0%, rgba(20, 20, 20, 0.95) 100%);
+    border: 3px solid transparent;
+    border-radius: 12px;
+    padding: 12px 20px;
+    height: 90px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    transition: all 0.4s ease;
+    position: relative;
+    overflow: hidden;
+    flex: 1;
+    max-width: 250px;
+}
+
+/* Gør vinduesstus-containeren rød, men er usynlig til at starte med */
+.vinduesstatus::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: linear-gradient(135deg, #ff0000 0%, #8b0000 100%);
+    border-radius: 12px;
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+}
+/* Dette er dem der aktiverer status'en vi oprettede før */
+.vinduesstatus.open::before {
+    background: linear-gradient(135deg, #279001 0%, #21ff2c 100%);
+    opacity: 1;
+}
+
+.vinduesstatus.closed::before {
+    background: linear-gradient(135deg, #ff0000 0%, #8b0000 100%);
+    opacity: 1;
+}
+
+/* opretter containeren med den lille cirkel hvor at vores ikon er*/
+.status-cirkel {
+    width: 65px;
+    height: 65px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.3);
+    transition: all 0.4s ease;
+    flex-shrink: 0;
+}
+/* Tilpasser cirklen med farve*/
+.vinduesstatus.open .status-cirkel {
+    background: linear-gradient(135deg, #279001 0%, #21ff2c 100%);
+    box-shadow: 0 0 20px rgba(56, 239, 125, 0.5);
+}
+
+.vinduesstatus.closed .status-cirkel {
+    background: linear-gradient(135deg, #ff0000 0%, #8b0000 100%);
+    box-shadow: 0 0 20px rgba(255, 106, 0, 0.5);
+}
+/* container til vores ikon i cirklen */
+.status-ikon {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+    filter: brightness(0) invert(1);
+}
+/* opsætning af teksten inde i midter containeren*/
+.status-tekst {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+/* Den øverste del med "Vinduestatus*/
+.status-label {
+    font-size: 11px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+/* værdien under med f.eks. lukket */
+.status-vaerdi {
+    font-size: 20px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+    letter-spacing: 0.5px;
+}
+/* Vores sidste kasse i top-baren ude til høre */
+.ur-boks {
+    width: 100px;
+    height: 90px;
+    background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    flex-shrink: 0;
+}
+/* Format til det øverste tekst med klokkeslæt */
+.ur-tid {
+    font-size: 28px;
+    font-weight: 700;
+    font-family: 'Courier New', Courier, monospace;
+}
+/* Format til det nederste tekst med dato */
+.ur-dato {
+    font-size: 11px;
+    opacity: 0.8;
+    margin-top: 2px;
+}
+/* Hele containeren under topbaren */
+.hoved-indhold {
+    height: calc(480px - 110px);
+    padding: 10px;
+    background: #000;
+    display: flex;
+    gap: 15px;
+}
+/* Vores container ude til venstre med bme680 data */
+.data-kolonne {
+    width: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    flex-shrink: 0;
+}
+/* Bagrund til de 3 kasser */
+.indendoers-aflæsning {
+    background: linear-gradient(135deg, rgba(30, 30, 30, 0.8) 0%, rgba(20, 20, 20, 0.8) 100%);
+    border-radius: 10px;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+/* Hovedteksten i de 3 kasser */
+.indendoers-label {
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+}
+/* værdien i de 3 kasser */
+.indoor-value {
+    font-size: 46px;
+    font-weight: 700;
+    font-family: 'Courier New', Courier, monospace;
+    transition: color 0.3s ease, text-shadow 0.3s ease;
+}
+/* Teksten om enheden f.eks. "%" */
+.indendoers-enhed {
+    font-size: 22px;
+    color: #888;
+    margin-left: 5px;
+}
+/* farven på gode værdier */
+.indoor-value.normal {
+    color: #23e900;
+}
+/* farve når den er for høj */
+.indoor-value.too_high {
+    color: #fa9a14;
+    text-shadow: 0 0 20px rgba(255, 196, 0, 0.653);
+}
+/* farve når den er for lav */
+.indoor-value.too_low {
+    color: #fa9a14;
+    text-shadow: 0 0 20px rgba(255, 196, 0, 0.653);
+}
+/* farve når den er alt for høj*/
+.indoor-value.max {
+    color: #f61818;
+    text-shadow: 0 0 20px rgba(161, 12, 1, 0.67);
+}
+/* farve på gas limit */
+.indoor-value.limit {
+    color: #fa9a14;
+    text-shadow: 0 0 20px rgba(255, 196, 0, 0.653);
+}
+/* farve når gas er alt for dårligt */
+.indoor-value.min {
+    color: #f61818;
+    text-shadow: 0 0 20px rgba(161, 12, 1, 0.67);
+}
+/* container til graferne */
+.graf-sektion {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(20, 20, 20, 0.5);
+    border-radius: 10px;
+    padding: 10px;
+}
+/* container til billedet der generes */
+.graf-billede {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    animation: fadeIn 0.5s ease;
+}
+/* animation når der roteres mellem graferne */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+/* containeren til vores toast notifikation */
+.toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: rgba(50, 50, 50, 0.95);
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 25px;
+    font-size: 15px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    transition: all 0.3s ease-out;
+    max-width: 400px;
+    z-index: 2000;
+    /* skaber en "blury" effekt bag notifikationen */
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+/* den pop-up animation */
+.toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+/* farverne containeren kan have */
+.toast.fejl {
+    background: rgba(244, 67, 54, 0.95);
+}
+
+.toast.success {
+    background: rgba(76, 175, 80, 0.95);
+}
+
+.toast.advarsel {
+    background: rgba(255, 152, 0, 0.95);
+}
+
+.toast.info {
+    background: rgba(33, 150, 243, 0.95);
+}
+/* det ikon som javascript indsætter */
+.toast-ikon {
+    font-size: 20px;
+    flex-shrink: 0;
+}
+/* Sørger for at containeren altid har samme størrelse ligemeget hvor meget tekst der er i den */
+.toast-besked {
+    flex: 1;
+}
+/* giver et ensartet look til knapper - også hvis der skulle tilføjes nye */
+button:focus-visible,
+a:focus-visible {
+    outline: 3px solid rgba(255, 255, 255, 0.8);
+    outline-offset: 3px;
+}
+/* Til at disable animationer hvis det ønskes */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* Tager over farverne og laver kontrastfarver */
+@media (prefers-contrast: high) {
+    .vindue-knap,
+    .udendoers-boks,
+    .ur-boks,
+    .indendoers-aflæsning {
+        border: 2px solid currentColor;
+    }
+}
+/* lidt en ligegyldig "ekstra" funktion, men gør baggrunden hvid ved print til pdf */
+@media print {
+    body {
+        background: #fff;
+        color: #000;
+        width: auto;
+        height: auto;
+    }
+    
+    .vindue-knap,
+    .toast {
+        display: none;
+    }
+    
+    .graf-billede {
+        max-width: 100%;
+        page-break-inside: avoid;
+    }
+}
+/* skaber en loading animation til når vi mangler en graf */
+img[src=""],
+img:not([src]) {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.2) 50%, rgba(255, 255, 255, 0.1) 100%);
+    background-size: 200% 100%;
+    animation: loading 1.5s infinite;
+}
+
+@keyframes loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+/* skjuler elementet */
+.hidden {
+    display: none !important;
+}
+
+/* Dette skaber usynlig tekst til vores screen-reader står i html men kan ikke ses */
+.visuelt-skjult {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+/* slår scroll-funktion fra på hjemmesiden */
+.ingen-scroll {
+    overflow: hidden;
+}
