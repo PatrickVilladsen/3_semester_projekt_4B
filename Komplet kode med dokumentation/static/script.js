@@ -171,7 +171,7 @@ function opdaterUdendørsData(sensor) {
 
 /* Opdaterer indendørs sensor værdier med farve-kodning. */
 function opdaterIndendørsData(bme680) {
-    opdaterIndendørsVærdi('indoorTemp', bme680.temperatur, 'temperatur');
+    opdaterIndendørsVærdi('indoorTemp', bme680.temperatur, 'temp');
     opdaterIndendørsVærdi('indoorFugt', bme680.luftfugtighed, 'luftfugtighed');
     opdaterIndendørsVærdi('indoorGas', bme680.gas, 'gas');
 }
@@ -234,7 +234,7 @@ function bestemFarveKlasse(value, type) {
     }
     
     switch (type) {
-        case 'temperatur':
+        case 'temp':
         case 'luftfugtighed':
             if (value >= grænser.max) {
                 return 'max';

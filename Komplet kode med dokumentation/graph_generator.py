@@ -422,15 +422,15 @@ class GrafGenerator:
         # Title styling
         ax.set_title(
             titel,
-            fontsize=22,
+            fontsize=24,
             fontweight='bold',
             color='white',
             pad=20  # mellemrum mellem title og plot
         )
         
         # Axis labels
-        ax.set_xlabel('Dato', fontsize=14, color='#888888')
-        ax.set_ylabel(y_label, fontsize=14, color='#888888')
+        ax.set_xlabel('Dato', fontsize=18, color='#888888')
+        ax.set_ylabel(y_label, fontsize=18, color='#888888')
         
         # Grid for læsbarhed
         ax.grid(
@@ -466,7 +466,8 @@ class GrafGenerator:
         plt.setp(
             ax.xaxis.get_majorticklabels(),
             rotation=45,
-            ha='right'  # Horisontalt alignment
+            ha='right',	# Horisontalt alignment
+            fontsize=16
         )
     
     def _tilføj_legend(
@@ -504,7 +505,7 @@ class GrafGenerator:
             framealpha=0.8,
             facecolor='#1a1a1a',
             edgecolor='#333333',
-            fontsize=12
+            fontsize=16
         )
         
         # Sæt legend tekst farve til hvid
@@ -635,6 +636,7 @@ class GrafGenerator:
             self._stil_axes(ax, config['title'], config['unit'])
             self._konfigurer_dato_akse(ax)
             self._tilføj_legend(ax, bool(indoor_data or outdoor_data))
+            ax.tick_params(axis='y', labelsize=16)
             
             # Layout optimering
             plt.tight_layout()
@@ -695,7 +697,7 @@ class GrafGenerator:
         # Opret figur
         fig: Figure
         ax: Axes
-        fig, ax = plt.subplots(figsize=(10, 6), dpi=80)
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=120)
         
         # Background colors
         fig.patch.set_facecolor('#000000')
