@@ -4,10 +4,7 @@
 
 set -e  # Stop ved fejl
 
-echo "==================================="
 echo "PostgreSQL Setup Script"
-echo "==================================="
-echo
 
 # Variabler vi skal bruge - kan ændres undtagen PG_HBA, som er PostgreSQL's sikkerhedsfil.
 # HBA = Host based Authentication
