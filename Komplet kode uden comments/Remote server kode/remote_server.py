@@ -458,7 +458,7 @@ async def cleanup(
 
 if __name__ == "__main__":
 
-    logger.info("Starter Remote Server på port 8080...")
+    logger.info("Starter Remote Server på port 8080")
     
     uvicorn.run(
         app,

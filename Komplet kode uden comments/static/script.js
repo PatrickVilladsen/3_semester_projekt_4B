@@ -398,7 +398,7 @@ function setupVinduesKontrol() {
         lukKnap.addEventListener('touchcancel', håndterTrykAnnullering);
     }
     
-    console.log('✓ Window controls med press & hold konfigureret');
+    console.log('Window controls med press and hold konfigureret');
 }
 
 window.sendKommando = sendKommando;

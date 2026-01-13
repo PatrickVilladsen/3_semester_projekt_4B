@@ -283,16 +283,14 @@ def udfør_måling_med_retry():
 def main():
 
     print("ESP32 tænder")
-    print("Sleep interval: {}s ({} min)".format(SLEEP_TID, SLEEP_TID // 60))
+    print("Sleep interval: {} sekunder".format(SLEEP_TID))
     print("Batteri slukker: <{}%".format(BATTERI_SHUTDOWN_GRÆNSE))
     
     sleep(1)
     
     udfør_måling_med_retry()
         
-    print("\nGår i deepsleep i {}s ({} min)...".format(
-        SLEEP_TID, SLEEP_TID // 60
-    ))
+    print("Går i deepsleep i {} sekunder".format(SLEEP_TID))
         
     deepsleep(SLEEP_TID)
         

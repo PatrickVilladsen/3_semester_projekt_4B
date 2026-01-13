@@ -47,7 +47,7 @@ class BME680Sensor(threading.Thread):
         
         for adresse, navn in adresser:
             try:
-                print(f"Forsøger BME680 på {navn}...")
+                print(f"Forsøger at forbinde til BME680 på {navn}")
                 self.sensor = bme680.BME680(adresse)
                 
                 self.sensor.set_humidity_oversample(bme680.OS_2X)
