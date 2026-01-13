@@ -37,11 +37,11 @@ WLAN_INTERFACE="wlan0"
 # SSH port
 SSH_PORT="22"
 
-echo "Validerer konfiguration..."
+echo "Validerer konfiguration"
 
 # Tjek at script køres som root
 if [[ $EUID -ne 0 ]]; then
-   echo "FEJL: Dette script skal køres med sudo"
+   echo "FEJL: Dette script skal køres som root"
    exit 1
 fi
 
@@ -406,4 +406,5 @@ else
 fi
 
 sleep 5
+
 reboot
